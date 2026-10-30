@@ -1,0 +1,12 @@
+# Stage 1 only. Use a NEW, disposable cloud database; never an existing user DB.
+databases:
+  - name: adamlife-staging-db
+    databaseName: adamlife_staging
+    user: adamlife_migrator
+    postgresMajorVersion: "16"
+    plan: free
+    region: frankfurt
+    ipAllowList: []
+# No public database access by default. For one-time remote provisioning, allow
+# only the operator's confirmed /32 IP temporarily, then close it again.
+# Free PostgreSQL expires after 30 days; do not store real financial data.

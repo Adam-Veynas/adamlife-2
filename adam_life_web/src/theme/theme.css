@@ -1,0 +1,55 @@
+/* Semantic roles override decoration only; layout and navigation stay intact. */
+.positive { color: var(--positive) !important; }
+.negative, .muted-warm { color: var(--negative) !important; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, [tabindex]:focus-visible { outline-color: var(--accent); }
+::selection { background: var(--accent-soft); color: var(--text); }
+.skip-link { background: var(--accent); color: var(--on-accent); }
+.button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); box-shadow: none; }
+.button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.button.secondary { background: var(--surface-high); border-color: var(--line-strong); color: var(--text-secondary); }
+.button.secondary:hover { background: var(--surface-hover); border-color: var(--accent-border); }
+.brand-mark, .tip-icon, .workspace-icon, .avatar, .empty-state>span,
+.upload-icon, .net-result-icon { color: var(--accent-text); background: var(--surface-high); border-color: var(--line-strong); }
+.brand-soft, .metric-label, .category-list-name, .field>span { color: var(--text-secondary); }
+.eyebrow, .text-action, .bottom-note button, .import-tip>button { color: var(--accent-text); }
+.nav-item.active, .type-toggle>button.selected, .chart-switch>button.selected,
+.period-tabs>button.selected, .type-filters>button.selected { color: var(--accent-text); background: var(--accent-soft); }
+.nav-item:hover { background: var(--surface-hover); }
+.active-dot, .live-dot, .profile small i, .filter-button i, .little-line { background: var(--accent); }
+.mobile-nav>button.active { color: var(--accent-text); }
+.mobile-nav>button.active>svg { background: var(--accent-soft); box-shadow: 0 0 0 6px var(--accent-soft); }
+.mobile-nav>button:hover { background: var(--surface-hover); }
+.summary-panel, .import-tip, .prototype-badge, .net-result, .toast,
+.demo-callout, .selected-file { background: var(--surface); border-color: var(--line); }
+.summary-panel:before { background: var(--line-strong); }
+.summary-metric, .balance-metric, .summary-metric+.summary-metric { border-color: var(--line); }
+.metric-direction.in, .income-icon { color: var(--positive); background: var(--positive-soft); border-color: var(--positive-border); }
+.metric-direction.out { color: var(--negative); background: var(--negative-soft); }
+.category-icon { color: var(--negative); background: var(--surface-high); border-color: var(--line); }
+.category-icon.income-icon { color: var(--positive); background: var(--positive-soft); border-color: var(--positive-border); }
+.transaction-amount .row-direction { color: inherit; }
+.category-list button:hover, .text-action:hover { color: var(--accent-hover); }
+.search-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--focus-soft); }
+.filter-active, .bank-options>button.selected { border-color: var(--accent-border) !important; }
+.bank-options>button.selected { background: var(--accent-soft); }
+.bank-logo.kaspi, .bank-logo.freedom { background: var(--surface-high); color: var(--text-secondary); }
+.import-steps .current>b { background: var(--accent); color: var(--on-accent); }
+.import-steps>span.current, .import-steps b { color: var(--accent-text); }
+.import-rows input { accent-color: var(--accent); }
+.toast>span { background: var(--accent-soft); color: var(--accent-text); }
+.file-drop:hover, .file-drop.dragging { background: var(--accent-soft); border-color: var(--accent-border); }
+.add-operation { box-shadow: none; }
+.form-error { color: var(--negative); background: var(--negative-soft); border-color: var(--negative-border); }
+.danger-text, .delete-icon { color: var(--negative); }
+.danger-text:hover, .delete-icon { background: var(--negative-soft); }
+.danger { color: var(--on-accent); background: var(--danger); border-color: var(--danger); }
+.danger:hover { background: var(--danger-hover); }
+.cashflow-panel { --chart-color: var(--negative); }
+.cashflow-panel[data-flow="income"] { --chart-color: var(--positive); }
+.chart-summary>strong { color: var(--chart-color); }
+.chart-caption i { background: var(--chart-color); }
+.comparison-legend i, .bar-pair>span, .monthly-column.current .bar-pair>span { background: var(--positive); }
+.comparison-legend>span+span i, .bar-pair>span+span, .monthly-column.current .bar-pair>span+span { background: var(--negative); }
+.bar-pair>span { opacity: .68; }
+.monthly-column.current .bar-pair>span { opacity: 1; }

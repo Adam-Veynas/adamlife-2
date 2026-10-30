@@ -1,0 +1,43 @@
+# Stage 2: only after the DB has migrations and a separate non-owner runtime role.
+# Blueprint path assumes a sanitized repository containing adam_life_api/.
+services:
+  - type: web
+    name: adamlife-staging-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    rootDir: adam_life_api
+    autoDeployTrigger: "off"
+    buildCommand: python -m pip install -r requirements.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log --no-proxy-headers
+    healthCheckPath: /health/ready
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.14"
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: TRUSTED_HOSTS
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: DB_POOL_SIZE
+        value: "3"
+      - key: DB_MAX_OVERFLOW
+        value: "2"
+      - key: SESSION_LIFETIME_SECONDS
+        value: "604800"
+      - key: SESSION_IDLE_SECONDS
+        value: "86400"
+# Never use fromDatabase.connectionString here: it supplies an owner credential.
+# MIGRATION_DATABASE_URL is intentionally absent from the running web service.
+# No preDeploy command: migrations are a separate controlled operator step.

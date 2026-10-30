@@ -1,0 +1,1 @@
+SCHEMA_REVISION = "0003_auth"

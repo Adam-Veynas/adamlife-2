@@ -1,0 +1,14 @@
+.env
+.env.*
+*.local
+.git/
+.vercel/
+node_modules/
+.npm-cache/
+.vite/
+test-results/
+*.tsbuildinfo
+deployment/
+README.md
+QA-*.md
+start-*.cmd
