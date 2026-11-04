@@ -1,5 +1,6 @@
 """Google-only OIDC adapter. No provider URLs or key locations come from tokens/users."""
 import hmac
+import logging
 from threading import Lock
 from time import monotonic
 
@@ -12,6 +13,7 @@ from app.errors import APIError
 AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+logger = logging.getLogger("adamlife.oauth")
 
 
 class GoogleOIDC:
@@ -63,6 +65,7 @@ class GoogleOIDC:
         return claims
 
     def exchange(self, code: str, verifier: str, nonce: str) -> dict:
+        stage = "token_exchange"
         try:
             response = self.http.post(TOKEN_URL, data={
                 "grant_type": "authorization_code", "code": code, "code_verifier": verifier,
@@ -71,7 +74,22 @@ class GoogleOIDC:
                 "client_secret": self.settings.google_client_secret.get_secret_value(),
             })
             response.raise_for_status()
+            stage = "id_token_verification"
             # Access/refresh tokens are not stored, logged, or returned to the frontend.
             return self.verify(response.json()["id_token"], nonce)
-        except (httpx.HTTPError, jwt.PyJWTError, ValueError, KeyError, TypeError):
+        except (httpx.HTTPError, jwt.PyJWTError, ValueError, KeyError, TypeError) as exc:
+            # Never log exception text, response body, URLs, claims or credentials.
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else 0
+            reason = "unknown"
+            if stage == "token_exchange" and isinstance(exc, httpx.HTTPStatusError):
+                try:
+                    payload = exc.response.json()
+                    value = payload.get("error") if isinstance(payload, dict) else None
+                    if value in ("invalid_client", "invalid_grant", "invalid_request",
+                                 "unauthorized_client", "unsupported_grant_type", "redirect_uri_mismatch"):
+                        reason = value
+                except ValueError:
+                    pass
+            logger.warning("oauth_provider_failed stage=%s type=%s status=%s reason=%s",
+                           stage, type(exc).__name__, status, reason)
             raise APIError(400, "GOOGLE_LOGIN_FAILED", "Google sign-in could not be verified") from None
