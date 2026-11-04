@@ -3,6 +3,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import logging
 import secrets
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -19,6 +20,7 @@ from app.google_oidc import AUTHORIZE_URL
 from app.models import User
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+logger = logging.getLogger("adamlife.oauth")
 FLOW_SECONDS = 600
 
 
@@ -157,10 +159,15 @@ def callback(request: Request):
     response = RedirectResponse(target + "?auth_error=failed", status_code=303)
     clear_cookie(response, settings, settings.flow_cookie)
     if not settings.google_client_id or not settings.google_client_secret:
+        logger.warning("oauth_callback_rejected reason=not_configured")
         return response
     token = cookie_value(request, settings.flow_cookie)
     state = request.query_params.get("state", "")
-    if not token or len(state) != 43 or len(request.query_params.getlist("state")) != 1:
+    if not token:
+        logger.warning("oauth_callback_rejected reason=missing_or_invalid_flow_cookie")
+        return response
+    if len(state) != 43 or len(request.query_params.getlist("state")) != 1:
+        logger.warning("oauth_callback_rejected reason=invalid_state_format")
         return response
     with Session(engine(request)) as session, session.begin():
         context(session, "app.flow_hash", digest(token))
@@ -169,12 +176,15 @@ def callback(request: Request):
             LoginFlow.state_hash == digest(state), LoginFlow.expires_at > now()
         ).returning(LoginFlow.nonce, LoginFlow.verifier)).first()
     if flow is None:
+        logger.warning("oauth_callback_rejected reason=flow_expired_consumed_or_state_mismatch")
         return response
     if request.query_params.get("error"):
+        logger.warning("oauth_callback_rejected reason=provider_cancelled")
         response.headers["location"] = target + "?auth_error=cancelled"
         return response
     code = request.query_params.get("code", "")
     if not code or len(code) > 4096 or len(request.query_params.getlist("code")) != 1:
+        logger.warning("oauth_callback_rejected reason=invalid_code_format")
         return response
     try:
         claims = request.app.state.google.exchange(code, flow.verifier, flow.nonce)
