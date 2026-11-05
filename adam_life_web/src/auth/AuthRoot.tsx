@@ -1,27 +1,12 @@
 import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react'
-import { ArrowRight, LogOut, ShieldCheck } from 'lucide-react'
-import { Brand, Layout, navigation } from '../components/Layout'
-import type { View } from '../domain/finance'
-import type { User } from './client'
+import { ArrowRight, ShieldCheck } from 'lucide-react'
+import { Brand } from '../components/Layout'
+import { FinancialWorkspace } from '../finance/Workspace'
 import { AuthController } from './controller'
 
 // The demo repository and demo money are not loaded by an authenticated page.
 const Demo = lazy(() => import('../App').then(module => ({ default: module.App })))
 const controller = new AuthController()
-
-function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const [view, setView] = useState<View>('overview')
-  const title = navigation.find(item => item.id === view)!.title
-  return <Layout view={view} onNavigate={setView} accountControl={<button className="button secondary auth-logout" onClick={onLogout}><LogOut size={16} />Выйти</button>}>
-    <div className="page-content"><header className="page-header"><div><h1>{title}</h1><p>{user.display_name}</p></div></header>
-      <section className="auth-workspace"><span className="auth-symbol"><ShieldCheck size={26} /></span>
-        <h2>{view === 'overview' ? 'Ваше личное пространство' : title + ': пока нет данных'}</h2>
-        <p>Вы вошли в свой аккаунт. Учёт финансов на сервере ещё не подключён — здесь не используются демонстрационные операции и остатки.</p>
-        {user.email && <span className="auth-email">{user.email}</span>}
-      </section>
-    </div>
-  </Layout>
-}
 
 export function AuthRoot() {
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot)
@@ -64,7 +49,7 @@ export function AuthRoot() {
       const channel = new BroadcastChannel('adamlife-auth'); channel.postMessage('signed-out'); channel.close()
     }
   }
-  if (state.kind === 'authenticated') return <Workspace key={state.session.user.id} user={state.session.user} onLogout={() => void logout()} />
+  if (state.kind === 'authenticated') return <FinancialWorkspace key={state.session.user.id} session={state.session} onLogout={() => void logout()} onUnauthorized={() => { controller.lock(); void controller.restore() }} />
   if (state.kind === 'demo') return <><div className="auth-demo-bar"><span>Демонстрация · не данные аккаунта</span><button onClick={() => void controller.restore()}>Завершить просмотр</button></div><Suspense fallback={<div className="auth-screen">Загрузка демонстрации…</div>}><Demo /></Suspense></>
   return <main className="auth-screen"><section className="auth-card"><Brand />
     <span className="auth-eyebrow">ЛИЧНОЕ ФИНАНСОВОЕ ПРОСТРАНСТВО</span>

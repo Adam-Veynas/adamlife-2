@@ -29,7 +29,7 @@ def upgrade_sql():
 def test_one_linear_revision_chain():
     scripts = ScriptDirectory.from_config(migration_config())
     assert scripts.get_heads() == [SCHEMA_REVISION]
-    assert len(list(scripts.walk_revisions())) == 3
+    assert len(list(scripts.walk_revisions())) == 4
 
 
 def test_migrations_generate_complete_postgresql_sql_without_connection():
@@ -141,6 +141,11 @@ def test_frozen_initial_migration_matches_all_orm_tables(monkeypatch):
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "op", Recorder)
     module.upgrade()
+
+    # The only foundation constraint changed by 0004 is the supported account kinds.
+    old_kind = next(c for c in recorded.tables["accounts"].constraints if c.name == "ck_accounts_kind")
+    recorded.tables["accounts"].constraints.remove(old_kind)
+    recorded.tables["accounts"].append_constraint(CheckConstraint("kind IN ('bank', 'cash', 'deposit')", name="ck_accounts_kind"))
 
     def columns(table):
         return [(c.name, str(c.type.compile(dialect=postgresql.dialect())), c.nullable,

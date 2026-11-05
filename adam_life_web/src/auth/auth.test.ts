@@ -17,6 +17,15 @@ function deferred<T>() {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('server sessions and memory isolation', () => {
+  it('keeps the workspace mounted during background session validation', async () => {
+    const server = api(), auth = new AuthController(server), pending = deferred<Session>()
+    await auth.restore()
+    server.me.mockReturnValueOnce(pending.promise)
+    const checking = auth.restore()
+    expect(auth.snapshot()).toEqual({ kind: 'authenticated', session: user() })
+    pending.resolve(user()); await checking
+    expect(auth.snapshot().kind).toBe('authenticated')
+  })
   it('restores a server session without browser storage', async () => {
     vi.stubGlobal('localStorage', { getItem: () => { throw new Error('must not read storage') }, setItem: () => { throw new Error('must not write storage') } })
     const auth = new AuthController(api())

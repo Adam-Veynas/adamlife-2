@@ -70,7 +70,7 @@ class Account(Identity, Owned, Versioned, Base):
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_accounts_owner_id"),
         UniqueConstraint("user_id", "id", "currency", name="uq_accounts_owner_id_currency"),
-        CheckConstraint("kind IN ('bank', 'cash')", name="kind"),
+        CheckConstraint("kind IN ('bank', 'cash', 'deposit')", name="kind"),
         CheckConstraint("length(trim(name)) > 0", name="name"),
         CheckConstraint("version > 0", name="version"),
         Index("ix_accounts_user_id", "user_id"),
