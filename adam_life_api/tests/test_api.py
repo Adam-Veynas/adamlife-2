@@ -149,5 +149,7 @@ def test_only_infrastructure_and_auth_routes_and_no_public_user_id_parameter(set
     app = create_app(settings)
     paths = app.openapi()["paths"]
     assert set(paths) == {"/health", "/health/ready", "/auth/config", "/auth/google/start",
-                          "/auth/google/callback", "/auth/me", "/auth/logout"}
-    assert all(not op.get("parameters") for path in paths.values() for op in path.values())
+                          "/auth/google/callback", "/auth/me", "/auth/logout", "/finance/bootstrap", "/finance/snapshot",
+                          "/finance/accounts", "/finance/accounts/{identifier}", "/finance/categories",
+                          "/finance/categories/{identifier}", "/finance/operations", "/finance/operations/{identifier}"}
+    assert all(p["name"] != "user_id" for path in paths.values() for op in path.values() for p in op.get("parameters", []))
