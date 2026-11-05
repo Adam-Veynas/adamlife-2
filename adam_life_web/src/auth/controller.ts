@@ -22,7 +22,9 @@ export class AuthController {
   async restore() {
     if (this.pendingAction) return
     const generation = ++this.generation
-    this.set({ kind: 'loading' })
+    // Keep an already authenticated editor mounted during periodic validation.
+    // A rejected validation still clears user data below.
+    if (this.state.kind !== 'authenticated') this.set({ kind: 'loading' })
     try {
       const session = await this.api.me()
       if (generation === this.generation) this.set({ kind: 'authenticated', session })
