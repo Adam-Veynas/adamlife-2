@@ -1,6 +1,6 @@
-# AdamLife API — инфраструктура и авторизация
+# AdamLife API — авторизация и финансовое ядро
 
-Отдельный FastAPI-проект рядом с `adam_life_web`. React подключён к API авторизации;
+Отдельный FastAPI-проект рядом с `adam_life_web`. React подключён к API авторизации и финансов;
 дизайн Obsidian Graphite сохранён. Старые SwiftUI/Flutter клиенты не изменены.
 Нужны Python **3.12+** и PostgreSQL **16+**.
 Никаких Docker, Redis, аккаунтов хостинга или глобальных npm-пакетов не требуется.
@@ -8,10 +8,11 @@
 ## Что есть
 
 - FastAPI/Uvicorn; синхронный SQLAlchemy 2 и psycopg 3; Alembic.
-- Три PostgreSQL-миграции: базовые сущности, tenant/opening safeguards, авторизация.
+- Четыре PostgreSQL-миграции: базовые сущности, tenant/opening safeguards, авторизация, депозитный тип счёта.
 - Пользователи, валюты, счета, категории, операции, расписания/экземпляры платежей,
-  аудит, заготовка хранения ключей идемпотентности. Это схема, не готовые бизнес-сервисы.
-- Только справочник KZT/USD/EUR в миграции. Никаких демо-данных или финансового CRUD.
+  аудит, заготовка хранения ключей идемпотентности. Платежи пока представлены только схемой.
+- Финансовый CRUD: счета, категории, доходы, расходы, переводы; реальные балансы по валютам.
+  При первом входе создаются только стандартные категории пользователя, без счетов и демо-операций.
 - Google OIDC code flow, state/nonce/PKCE, проверка ID token, серверные cookie-сессии,
   регистрация по sub, /auth/me и logout. FORCE RLS сохранён.
 - Env-конфигурация, закрытые по умолчанию настройки production, ограниченный пул/таймауты,
@@ -38,8 +39,8 @@ adam_life_web/start-adamlife.cmd. Вход Google включится после 
 
 ```text
 adam_life_api/
-  app/                 # config, db, models, auth, auth_models, google_oidc, errors, main
-  migrations/          # env.py, template, versions/0001, 0002, 0003
+  app/                 # config, db, models, auth, auth_models, google_oidc, finance, errors, main
+  migrations/          # env.py, template, versions/0001, 0002, 0003, 0004
   scripts/             # ручная настройка выделенной локальной БД и runtime-прав
   tests/               # HTTP/config/schema + opt-in настоящий PostgreSQL
   docs/decisions.md
