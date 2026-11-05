@@ -1,5 +1,136 @@
 # Проверки AdamLife API
 
+## Финансовое ядро — 5 ноября 2026
+
+- Backend: **34 passed, 0 skipped** — только `test_finance_postgres.py` (15),
+  `test_migrations.py` и проверка списка API-маршрутов (19 суммарно).
+- Финансовые интеграционные проверки используют настоящую локальную PostgreSQL,
+  роль без BYPASSRLS, серверные сессии и выделенную `adamlife_test`; авторизация не подменена.
+  Проверены CRUD, два пользователя, CSRF, чужие UUID, начальные остатки и аудит,
+  архив/безопасное удаление, версии, категории, граница учёта, будущие записи,
+  переводы/смена сторон и типа, валюты, точность и чтение после пересоздания соединений.
+- Реальные upgrade/downgrade до `0004_finance` и сравнение схемы с ORM — успешно.
+  Исправлено удвоение имени CHECK-ограничения Alembic naming convention.
+- Frontend: **27 passed, 0 skipped** — `src/finance/finance.test.ts` (12) и
+  `src/auth/auth.test.ts` (15). Точность BigInt, фильтры, переводы, HTTP/CSRF,
+  отсутствие автодемо, очистка сессии, сохранение формы при фоновой проверке сессии.
+- TypeScript `tsc -b` и Vite production build — успешно. Зависимости не добавлялись.
+- В локальной development-БД применена миграция `0003_auth → 0004_finance`,
+  без удаления данных. `/health/ready` через FastAPI TestClient с реальным lifespan
+  и runtime-подключением: **200**. Это проверка приложения, не публичного хостинга.
+- Итого точечный набор: **61 passed, 0 skipped**. Полный набор не запускался.
+- Настоящий Google-вход ранее подтверждён владельцем; в этом этапе повторно не проверялся.
+  Сквозной пользовательский сценарий нового UI на физическом iPhone пока не проверен.
+  Сохранение проверено новым подключением к БД, не перезагрузкой компьютера.
+
+### Перед размещением
+
+Нужны подтверждение владельца, публикация изменений frontend/backend и применение
+`alembic upgrade head` в облаке с существующей migration-ролью. Новых секретов,
+таблиц или runtime-грантов миграция не требует. Миграция, backend и frontend должны
+выходить согласованно: readiness проверяет точную ревизию схемы. После выпуска проверить
+ready и с iPhone создать счёт/операцию, перезагрузить страницу, проверить остаток и выход.
+В этом этапе облачная БД, Render, Vercel и GitHub не изменялись.
+
+Дополнительные поля депозитов отложены по разрешённой границе этапа. Межвалютные переводы,
+PDF, расширенная аналитика и платежные функции не реализованы. История пока загружается
+целиком; автоматические повторы записи и серверная идемпотентность не включены.
+
+## Диагностика отказа настоящего Google-входа — 4 ноября 2026
+
+- После ввода credentials владельцем и успешного Render deploy в 15:55 (UTC+5)
+  пользователь сообщил возврат с auth_error=failed. Application logs за последний
+  час содержат startup/deploy, но не причину OAuth-отказа. Причина НЕ установлена:
+  существующий callback молча возвращал одинаковый redirect для нескольких ошибок.
+- Публичный POST /api/auth/google/start: 200, точный callback
+  https://adamlife-2.vercel.app/api/auth/google/callback, PKCE S256, flow cookie
+  Secure/HttpOnly/SameSite=Lax/Path=/, без Domain. Cookies/коды/токены не выводились.
+- Добавлена только диагностика: фиксированные причины отказа callback; стадия
+  обмена кода/проверки ID token, класс исключения, HTTP status и allowlist error
+  Google. Текст исключений, response body, claims и request query не логируются.
+  Поведение авторизации и проверки безопасности не изменены; это НЕ доказанное
+  исправление исходной ошибки, а подготовка следующего воспроизведения.
+- tests/test_oauth_diagnostics.py: 11 passed; compileall двух изменённых модулей
+  успешен. Полный набор, повторные миграции и финансовые тесты не запускались.
+- GitHub main: 866f55f (callback), d53eac8 (provider), a55758d (tests).
+  Render deploy dep-dblh28rncjis73drg4i0: Deploy succeeded | Live, 16:05 UTC+5;
+  Application startup complete. Диагностика доступна для новой попытки входа.
+- Для установления причины нужен новый реальный вход после диагностического деплоя.
+
+## Точечная проверка OAuth — 4 ноября 2026
+
+- Render Environment: APP_ENV=production, FRONTEND_ORIGIN=https://adamlife-2.vercel.app,
+  CORS_ORIGINS содержит только этот origin, GOOGLE_REDIRECT_URI точно
+  https://adamlife-2.vercel.app/api/auth/google/callback. GOOGLE_CLIENT_ID и
+  GOOGLE_CLIENT_SECRET отсутствуют; значения секретов не раскрывались.
+- Публичный API: /api/health/ready 200, /api/auth/config 200/google_enabled=false,
+  /api/auth/me 401; Google start с чужим Origin 403; CORS preflight своего origin 200
+  с точным Access-Control-Allow-Origin. Проверенные ответы имеют no-store.
+- Удаляющий session cookie на 401: Secure, HttpOnly, SameSite=Lax, host-only.
+  Настоящая login-сессия, Google callback и физический Safari/PWA не проверены.
+- Backend: только test_google_configuration.py + test_config_db.py — 28 passed.
+  Первый запуск: 22 passed, 6 setup errors из-за недоступной sandbox temp-папки;
+  повтор с отдельным --basetemp внутри .local: все 28 прошли, код не менялся.
+- Frontend: только src/auth/auth.test.ts — 14 passed; восстановление, logout,
+  очистка памяти, гонки пользователей, отсутствие автоматической подмены демо.
+- Итого 42 passed, 0 skipped в выбранных наборах. PostgreSQL RLS интеграционные
+  тесты не повторялись; актуальная изоляция двух реальных Google-пользователей
+  не подтверждена этим прогоном (ранее проверена на синтетических пользователях).
+- В существующей вкладке Google Cloud всё ещё незавершённая форма Finish с
+  неотмеченным User Data Policy. Нужны согласие владельца, OAuth client и закрытая
+  настройка ID/secret в Render. Регистрация redirect в Google ещё не подтверждена.
+- После настройки ручная приёмка: Safari → Google-вход → личное пространство без
+  демоданных → reload/повторное открытие → logout → reload показывает вход.
+  Повторить в установленной PWA и отдельно со вторым Google-аккаунтом.
+- Полный набор, миграции и redeploy не запускались; код и данные не менялись.
+
+## Публичный HTTPS staging — 2 ноября 2026, после развёртывания
+
+- Frontend https://adamlife-2.vercel.app: Vercel Ready, production build успешен,
+  commit 381ffd4ab66afae680d2e706f952b8656fe870fd; старый Flutter-проект не изменён.
+- Backend https://adamlife-staging-api.onrender.com: Render Live, установка зависимостей
+  и Uvicorn startup успешны. Прямой /health/ready → 200 с облачной PostgreSQL.
+- Активный vercel.json совпадает с подготовленным шаблоном, кроме реального upstream.
+- **9 из 9 публичных HTTPS smoke-проверок прошли**; отчёт outputs/https-staging-smoke.json:
+  главная 200; /api/health/ready 200; /api/auth/config 200 (google_enabled=false);
+  /api/auth/me 401; POST google/start с чужим Origin 403; logout без сессии 401;
+  standalone manifest и обе иконки 200. Все проверенные API ответы no-store.
+- Logout без сессии отклонён authentication dependency до Origin-проверки — ожидаемый 401.
+- /auth/me выставляет удаляющий cookie с Secure, HttpOnly, SameSite=Lax, без Domain.
+  Это проверка прохождения Set-Cookie через proxy, НЕ создание настоящей login-сессии.
+- Браузер показывает экран входа без ошибки API, кнопку Google disabled и явную демо-кнопку.
+- Google Cloud проект adamlife-staging создан; Branding ожидает согласия владельца
+  с User Data Policy. OAuth client/secret ещё отсутствуют, настоящий вход НЕ проверен.
+- Полная регрессия не повторялась; 269 passed / 0 skipped — предыдущий результат.
+  В этом запуске нет заявлений о тестировании Safari/PWA на физическом iPhone.
+- Платных ресурсов нет. Render Free засыпает; возможен timeout первого запроса.
+  Бесплатная PostgreSQL истекает 2 декабря 2026; не использовать для настоящих финансов.
+
+## Облачная PostgreSQL Render — 2 ноября 2026
+
+- Private GitHub main 386f221 подтверждён в браузере и доступен Render. Повторная загрузка не выполнялась.
+- Применён готовый database Blueprint: PostgreSQL 16, Free, Frankfurt, Available,
+  отдельная база adamlife_staging. Ресурс dpg-dbk1jf67bikc738s1ul0-a.
+- TLS verify-full с certifi CA: успешно. Системное хранилище CA не сработало,
+  абсолютный путь с кириллицей не прочитан libpq; относительный путь решил проблему
+  без отключения проверки сертификата.
+- Alembic upgrade head/current/check: 0003_auth, No new upgrade operations detected.
+- Runtime роль adamlife_app: без SUPERUSER/BYPASSRLS/CREATEROLE/CREATEDB и без
+  членства в роли владельца. database_ready(runtime_engine) == True.
+- Все 10 пользовательских/auth таблиц: RLS + FORCE RLS. Проверена видимость двух
+  синтетических пользователей по app.user_id и отсутствие строк без контекста;
+  транзакция с фикстурами полностью отменена, пользовательские данные не импортированы.
+- Три адресные API-проверки через локальный FastAPI TestClient с реальной облачной
+  runtime DB: /health/ready 200, /auth/me 401, чужой Origin на /auth/google/start 403.
+  Это НЕ проверка опубликованного backend или настоящего Google OAuth.
+- Временный /32 доступ был явно разрешён владельцем; после проверок закрыт,
+  Dashboard показывает External traffic not allowed. Платные ресурсы не создавались.
+- Полная регрессия не повторялась: предыдущие 269 passed / 0 skipped остаются
+  историческим результатом, не результатом этого запуска.
+- Vercel CLI credential: официальный API вернул 403; в браузере запрошено
+  подтверждение Authorize Vercel через GitHub. Публичной ссылки приложения пока нет.
+- Safari/PWA на физическом iPhone и настоящий Google-вход пока не проверены.
+
 ## Подготовка HTTPS staging — 27 октября 2026
 
 - Проверены существующие callback, host-only Secure/HttpOnly/SameSite=Lax cookies,
