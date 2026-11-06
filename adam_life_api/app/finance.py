@@ -1,5 +1,6 @@
 """Authenticated financial ledger. Integer minor units on disk, decimal strings on wire."""
 from datetime import date, datetime, timezone
+from decimal import Decimal
 import hmac
 from typing import Annotated, Literal
 from uuid import UUID
@@ -10,7 +11,7 @@ from sqlalchemy import or_, select, text
 
 from app.auth import authenticated_session, csrf_token, require_origin
 from app.errors import APIError
-from app.models import Account, AuditEvent, Category, PaymentOccurrence, PaymentSchedule, Transaction, User
+from app.models import Account, AuditEvent, Category, DepositPlanVersion, GoalAllocation, PaymentOccurrence, PaymentSchedule, Transaction, User
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 CurrencyCode = Literal["KZT", "USD", "EUR"]
@@ -32,6 +33,10 @@ class AccountInput(Input):
     archived: bool = False
     expected_version: int | None = Field(default=None, ge=1)
     opening_change_reason: str | None = Field(default=None, max_length=500)
+    deposit_type: Literal["savings", "term"] | None = None
+    annual_rate: Decimal | None = Field(default=None, ge=0, le=Decimal('99999.9999'), max_digits=9, decimal_places=4, allow_inf_nan=False)
+    deposit_opened_on: date | None = None
+    deposit_ends_on: date | None = None
 
     @field_validator("name")
     @classmethod
@@ -114,7 +119,28 @@ def account_data(row, balance=None):
     return dict(id=str(row.id), name=row.name, kind=row.kind, bank_code=row.bank_code,
                 currency=row.currency, opening_balance_minor=str(row.opening_balance_minor),
                 opening_date=row.opening_date.isoformat(), archived=row.archived_at is not None,
-                version=row.version, balance_minor=str(balance if balance is not None else row.opening_balance_minor))
+                version=row.version, balance_minor=str(balance if balance is not None else row.opening_balance_minor),
+                deposit_type=row.deposit_type, annual_rate=str(row.annual_rate) if row.annual_rate is not None else None,
+                deposit_opened_on=row.deposit_opened_on.isoformat() if row.deposit_opened_on else None,
+                deposit_ends_on=row.deposit_ends_on.isoformat() if row.deposit_ends_on else None)
+
+
+def deposit_values(body: AccountInput, existing=None):
+    fields = ("deposit_type", "annual_rate", "deposit_opened_on", "deposit_ends_on")
+    if body.kind != "deposit":
+        return dict.fromkeys(fields)
+    # Old clients may omit new fields. Preserve existing metadata on edits/archival.
+    values = {key: getattr(body, key) if key in body.model_fields_set else
+              getattr(existing, key) if existing is not None and existing.kind == "deposit" else None
+              for key in fields}
+    if values["deposit_type"] is None:
+        if "deposit_type" in body.model_fields_set:
+            fail("DEPOSIT_TYPE_REQUIRED", "Выберите тип депозита", 422)
+        if existing is None or existing.kind != "deposit":
+            values["deposit_type"] = "savings"
+    if values["deposit_opened_on"] and values["deposit_ends_on"] and values["deposit_ends_on"] < values["deposit_opened_on"]:
+        fail("DEPOSIT_DATES", "Дата окончания не может быть раньше даты открытия", 422)
+    return values
 
 
 def category_data(row):
@@ -187,7 +213,8 @@ def account_history(session, identifier):
 def create_account(body: AccountInput, auth=Depends(finance_session)):
     session, uid = auth
     row = Account(user_id=uid, name=body.name, kind=body.kind, bank_code=body.bank_code if body.kind != "cash" else None,
-                  currency=body.currency, opening_balance_minor=money(body.opening_balance_minor), opening_date=body.opening_date)
+                  currency=body.currency, opening_balance_minor=money(body.opening_balance_minor), opening_date=body.opening_date,
+                  **deposit_values(body))
     session.add(row)
     session.flush()
     audit(session, uid, row, "created", account_data(row))
@@ -210,7 +237,14 @@ def edit_account(identifier: UUID, body: AccountInput, auth=Depends(finance_sess
                     Transaction.destination_account_id == row.id), Transaction.occurred_on < body.opening_date).limit(1))
         if earlier:
             fail("OPENING_BOUNDARY", "Дата начала учёта исключает существующие операции")
+    if row.kind == "deposit" and body.kind != "deposit":
+        plan = session.scalar(select(DepositPlanVersion).where(DepositPlanVersion.account_id == row.id).order_by(DepositPlanVersion.effective_month.desc()).limit(1))
+        if plan is not None:
+            fail("DEPOSIT_HAS_PLAN_HISTORY", "У депозита есть история плана. Сохраните тип или архивируйте счёт")
+    metadata = deposit_values(body, row)
     before = account_data(row)
+    for key, value in metadata.items():
+        setattr(row, key, value)
     row.name, row.kind = body.name, body.kind
     row.bank_code = body.bank_code if body.kind != "cash" else None
     row.opening_balance_minor, row.opening_date = opening, body.opening_date
@@ -226,6 +260,8 @@ def delete_account(identifier: UUID, body: VersionInput, auth=Depends(finance_se
     session, uid = auth
     row = owned(session, Account, identifier)
     version(row, body.expected_version)
+    if session.scalar(select(GoalAllocation.id).where(GoalAllocation.account_id == row.id).limit(1)) or session.scalar(select(DepositPlanVersion.id).where(DepositPlanVersion.account_id == row.id).limit(1)):
+        fail("ACCOUNT_HAS_SAVINGS", "У счёта есть распределения или история плана. Архивируйте его")
     if account_history(session, row.id) or session.scalar(select(PaymentSchedule.id).where(PaymentSchedule.account_id == row.id).limit(1)) or session.scalar(select(PaymentOccurrence.id).where(PaymentOccurrence.account_id == row.id).limit(1)):
         fail("ACCOUNT_HAS_HISTORY", "У счёта есть история. Архивируйте его")
     audit(session, uid, row, "deleted", account_data(row))

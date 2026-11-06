@@ -29,7 +29,7 @@ def upgrade_sql():
 def test_one_linear_revision_chain():
     scripts = ScriptDirectory.from_config(migration_config())
     assert scripts.get_heads() == [SCHEMA_REVISION]
-    assert len(list(scripts.walk_revisions())) == 4
+    assert len(list(scripts.walk_revisions())) == 6
 
 
 def test_migrations_generate_complete_postgresql_sql_without_connection():
@@ -37,7 +37,7 @@ def test_migrations_generate_complete_postgresql_sql_without_connection():
     assert sql.startswith("BEGIN;") and sql.rstrip().endswith("COMMIT;")
     assert set(Base.metadata.tables) == {"users", "currencies", "accounts", "categories", "transactions",
                                          "payment_schedules", "payment_occurrences", "audit_events", "idempotency_records",
-                                         "login_flows", "auth_sessions"}
+                                         "login_flows", "auth_sessions", "savings_goals", "goal_allocations", "deposit_plan_versions"}
     for table in Base.metadata.sorted_tables:
         assert f"CREATE TABLE {table.name}" in sql
         assert str(CreateTable(table).compile(dialect=postgresql.dialect()))
@@ -136,6 +136,14 @@ def test_frozen_initial_migration_matches_all_orm_tables(monkeypatch):
         def bulk_insert(*args):
             pass
 
+        @staticmethod
+        def add_column(table, column):
+            recorded.tables[table].append_column(column)
+
+        @staticmethod
+        def create_check_constraint(name, table, condition):
+            recorded.tables[table].append_constraint(CheckConstraint(condition, name=f"ck_{table}_{name}"))
+
     spec = importlib.util.spec_from_file_location("frozen_foundation", ROOT / "migrations/versions/0001_foundation.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -147,9 +155,15 @@ def test_frozen_initial_migration_matches_all_orm_tables(monkeypatch):
     recorded.tables["accounts"].constraints.remove(old_kind)
     recorded.tables["accounts"].append_constraint(CheckConstraint("kind IN ('bank', 'cash', 'deposit')", name="ck_accounts_kind"))
 
+    spec = importlib.util.spec_from_file_location("frozen_deposit", ROOT / "migrations/versions/0005_deposit.py")
+    deposit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(deposit)
+    monkeypatch.setattr(deposit, "op", Recorder)
+    deposit.upgrade()
+
     def columns(table):
         return [(c.name, str(c.type.compile(dialect=postgresql.dialect())), c.nullable,
-                 str(c.server_default.arg) if c.server_default is not None else None) for c in table.columns]
+                 str(c.server_default.arg) if c.server_default is not None else None) for c in sorted(table.columns, key=lambda c: c.name)]
 
     def constraints(table):
         result = set()
@@ -162,7 +176,7 @@ def test_frozen_initial_migration_matches_all_orm_tables(monkeypatch):
             result.add((type(c).__name__, str(c.name), definition))
         return result
 
-    assert set(recorded.tables) == set(Base.metadata.tables) - {"auth_sessions", "login_flows"}
+    assert set(recorded.tables) == set(Base.metadata.tables) - {"auth_sessions", "login_flows", "savings_goals", "goal_allocations", "deposit_plan_versions"}
     for name in recorded.tables:
         expected = Base.metadata.tables[name]
         assert columns(recorded.tables[name]) == columns(expected)

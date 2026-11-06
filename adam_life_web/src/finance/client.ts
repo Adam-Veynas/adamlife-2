@@ -1,6 +1,25 @@
 export type Currency = 'KZT' | 'USD' | 'EUR'
 export type Kind = 'income' | 'expense' | 'transfer'
-export interface Account { id: string; name: string; kind: 'bank' | 'cash' | 'deposit'; bank_code: string | null; currency: Currency; opening_date: string; opening_balance_minor: string; balance_minor: string; archived: boolean; version: number }
+export type DepositType = 'savings' | 'term'
+export interface Account { id: string; name: string; kind: 'bank' | 'cash' | 'deposit'; bank_code: string | null; currency: Currency; opening_date: string; opening_balance_minor: string; balance_minor: string; archived: boolean; version: number; deposit_type?: DepositType | null; annual_rate?: string | null; deposit_opened_on?: string | null; deposit_ends_on?: string | null }
+
+export function depositFormValues(kind: Account['kind'], type: DepositType, rate: string, opened: string, ends: string) {
+  if (kind !== 'deposit') return { deposit_type: null, annual_rate: null, deposit_opened_on: null, deposit_ends_on: null }
+  const normalized = rate.trim().replace(',', '.').replace(/^0+(?=\d)/, '')
+  if (normalized && !/^\d{1,5}(?:\.\d{1,4})?$/.test(normalized)) throw new Error('Укажите неотрицательную ставку: до 4 знаков после запятой')
+  if (opened && ends && ends < opened) throw new Error('Дата окончания не может быть раньше даты открытия')
+  return { deposit_type: type, annual_rate: normalized || null, deposit_opened_on: opened || null, deposit_ends_on: ends || null }
+}
+
+export function depositDetails(account: Account): [string, string][] {
+  if (account.kind !== 'deposit') return []
+  const dateLabel = (value?: string | null) => value ? value.split('-').reverse().join('.') : 'Не указана'
+  return [
+    ['Тип депозита', account.deposit_type === 'term' ? 'Срочный' : account.deposit_type === 'savings' ? 'Накопительный' : 'Не указан'],
+    ['Годовая ставка', account.annual_rate == null ? 'Не указана' : account.annual_rate.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '').replace('.', ',') + ' %'],
+    ['Дата открытия', dateLabel(account.deposit_opened_on)], ['Дата окончания', dateLabel(account.deposit_ends_on)],
+  ]
+}
 export interface Category { id: string; name: string; kind: 'income' | 'expense'; archived: boolean; version: number }
 export interface Operation { id: string; kind: Kind; account_id: string; destination_account_id: string | null; category_id: string | null; currency: Currency; amount_minor: string; occurred_on: string; comment: string; version: number }
 export interface Snapshot { as_of: string; accounts: Account[]; categories: Category[]; operations: Operation[]; balances: Record<Currency, { total_minor: string; current_minor: string; deposit_minor: string }> }

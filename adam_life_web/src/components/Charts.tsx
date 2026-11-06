@@ -4,6 +4,38 @@ import { categoryColor } from '../theme/palettes'
 import { categoryTotals, dailySeries, dateLabel, filterPeriod, money, monthLabel, monthlySeries, shiftMonth, totals, type Period, type Transaction } from '../domain/finance'
 import { categoryComparison, chartPointIndex, spendingComparison } from '../domain/analytics'
 
+/** Uses the existing chart interaction and tokens; monetary values stay exact BigInt. */
+export function BalanceHistoryChart({ points, format }: { points: { date: string; label: string; amount: bigint }[]; format: (amount: bigint) => string }) {
+  const [active, setActive] = useState<number | null>(null)
+  if (!points.length) return <p className="ledger-hint">Нет данных для графика.</p>
+  const selected = Math.min(active ?? points.length - 1, points.length - 1)
+  const min = points.reduce((value, p) => p.amount < value ? p.amount : value, points[0].amount)
+  const max = points.reduce((value, p) => p.amount > value ? p.amount : value, points[0].amount)
+  const coords = points.map((p, i) => ({ x: 12 + i / Math.max(1, points.length - 1) * 560,
+    y: max === min ? 105 : 177 - Number((p.amount - min) * 10000n / (max - min)) / 10000 * 145 }))
+  const path = coords.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ')
+  const valueText = `${points[selected].date.split('-').reverse().join('.')}: ${format(points[selected].amount)}`
+  function selectPoint(event: MouseEvent<SVGSVGElement>) {
+    const transform = event.currentTarget.getScreenCTM()
+    if (!transform) return
+    const point = event.currentTarget.createSVGPoint(); point.x = event.clientX; point.y = event.clientY
+    setActive(chartPointIndex(point.matrixTransform(transform.inverse()).x, points.length))
+  }
+  function selectKey(event: KeyboardEvent<SVGSVGElement>) {
+    const next = event.key === 'ArrowLeft' ? selected - 1 : event.key === 'ArrowRight' ? selected + 1 : event.key === 'Home' ? 0 : event.key === 'End' ? points.length - 1 : null
+    if (next !== null) { event.preventDefault(); setActive(Math.max(0, Math.min(points.length - 1, next))) }
+  }
+  return <div className="deposit-balance-chart"><div className="chart-summary" aria-live="polite"><strong>{format(points[selected].amount)}</strong><span>На {points[selected].date.split('-').reverse().join('.')}</span></div>
+    <svg className="flow-svg" viewBox="0 0 590 200" role="slider" tabIndex={0} aria-label="Остаток по месяцам: коснитесь графика или используйте стрелки" aria-valuemin={0} aria-valuemax={points.length - 1} aria-valuenow={selected} aria-valuetext={valueText} onClick={selectPoint} onKeyDown={selectKey}>
+      {[32, 105, 177].map(y => <line key={y} x1="8" x2="580" y1={y} y2={y} className="chart-gridline" />)}
+      <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" />
+      <line x1={coords[selected].x} x2={coords[selected].x} y1="20" y2="187" stroke="var(--line-strong)" strokeDasharray="3 5" />
+      {coords.map((p, i) => <circle key={points[i].date} cx={p.x} cy={p.y} r={i === selected ? 5 : 3} fill="var(--accent)"><title>{`${points[i].label}: ${format(points[i].amount)}`}</title></circle>)}
+    </svg><div className="chart-x-labels">{[...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])].map(i => <span key={i}>{points[i].label}</span>)}</div>
+    <label className="chart-scrubber"><span>Выбрать месяц</span><input type="range" aria-label="Месяц на графике остатка" min={0} max={points.length - 1} value={selected} onChange={e => setActive(Number(e.target.value))} /></label>
+  </div>
+}
+
 export function CashFlowChart({ items, month, period }: { items: Transaction[]; month: Date; period: Period }) {
   const [type, setType] = useState<'income' | 'expense'>('expense')
   const [cumulative, setCumulative] = useState(false)

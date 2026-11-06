@@ -99,7 +99,7 @@ def runtime_engine(pg_engine):
             ("USAGE", "SCHEMA public"),
             ("SELECT", "currencies, alembic_version"),
             ("SELECT, INSERT, UPDATE", "users"),
-            ("SELECT, INSERT, UPDATE, DELETE", "accounts, categories, transactions, payment_schedules, payment_occurrences, idempotency_records"),
+            ("SELECT, INSERT, UPDATE, DELETE", "accounts, categories, transactions, payment_schedules, payment_occurrences, idempotency_records, savings_goals, goal_allocations, deposit_plan_versions"),
             ("SELECT, INSERT", "audit_events"),
             ("SELECT, INSERT, UPDATE, DELETE", "login_flows, auth_sessions"),
         ]:

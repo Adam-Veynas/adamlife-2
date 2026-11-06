@@ -1,10 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { Modal } from '../components/Dialogs'
 import { localDate } from '../domain/finance'
-import { amountText, parseMinor, type Account, type Category, type Kind, type Operation, type Snapshot } from './client'
+import { amountText, parseMinor, depositFormValues, type DepositType, type Account, type Category, type Kind, type Operation, type Snapshot } from './client'
 
 type Save = (path: string, method: string, body: unknown) => Promise<void>
-function Editor({ title, children, onClose, submit }: { title: string; children: ReactNode; onClose: () => void; submit: () => Promise<void> }) {
+export function Editor({ title, children, onClose, submit }: { title: string; children: ReactNode; onClose: () => void; submit: () => Promise<void> }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   async function save(event: FormEvent) { event.preventDefault(); if (busy) return; setBusy(true); setError(''); try { await submit(); onClose() } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось сохранить'); setBusy(false) } }
   return <Modal title={title} onClose={() => { if (!busy) onClose() }}><form className="transaction-form" onSubmit={save}><fieldset disabled={busy} className="ledger-fields">{children}</fieldset>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" disabled={busy} className="button secondary" onClick={onClose}>Отмена</button><button className="button primary" disabled={busy}>{busy ? 'Сохранение…' : 'Сохранить'}</button></div></form></Modal>
@@ -13,16 +13,26 @@ export function AccountEditor({ item, onSave, onClose }: { item?: Account; onSav
   const [name, setName] = useState(item?.name ?? ''), [kind, setKind] = useState(item?.kind ?? 'bank'), [bank, setBank] = useState(item?.bank_code ?? '')
   const [currency, setCurrency] = useState(item?.currency ?? 'KZT'), [opening, setOpening] = useState(item ? amountText(item.opening_balance_minor) : '0')
   const [date, setDate] = useState(item?.opening_date ?? localDate(new Date())), [reason, setReason] = useState(''), [confirmed, setConfirmed] = useState(false)
+  const [depositType, setDepositType] = useState<DepositType>(item?.deposit_type ?? 'savings'), [rate, setRate] = useState(item?.annual_rate ?? '')
+  const [opened, setOpened] = useState(item?.deposit_opened_on ?? ''), [ends, setEnds] = useState(item?.deposit_ends_on ?? '')
   const baselineChanged = !!item && (opening !== amountText(item.opening_balance_minor) || date !== item.opening_date)
   return <Editor title={item ? 'Редактировать счёт' : 'Новый счёт'} onClose={onClose} submit={async () => {
     if (baselineChanged && !confirmed) throw new Error('Подтвердите изменение начального остатка')
     await onSave('accounts' + (item ? '/' + item.id : ''), item ? 'PUT' : 'POST', { name, kind, bank_code: kind === 'cash' ? null : bank || null, currency,
-      opening_balance_minor: parseMinor(opening, true), opening_date: date, archived: item?.archived ?? false, expected_version: item?.version, opening_change_reason: baselineChanged ? reason : null })
+      opening_balance_minor: parseMinor(opening, true), opening_date: date, archived: item?.archived ?? false, expected_version: item?.version, opening_change_reason: baselineChanged ? reason : null,
+      ...depositFormValues(kind, depositType, rate, opened, ends) })
   }}>
     <label className="field"><span>Название</span><input required maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder="Например, основная карта" /></label>
     <div className="form-grid"><label className="field"><span>Тип счёта</span><select value={kind} onChange={e => setKind(e.target.value as Account['kind'])}><option value="bank">Банковский счёт / карта</option><option value="cash">Наличные</option><option value="deposit">Депозит</option></select></label>
       <label className="field"><span>Валюта</span><select disabled={!!item} value={currency} onChange={e => setCurrency(e.target.value as Account['currency'])}>{['KZT', 'USD', 'EUR'].map(v => <option key={v}>{v}</option>)}</select></label></div>
     {kind !== 'cash' && <label className="field"><span>Банк · необязательно</span><input maxLength={40} value={bank} onChange={e => setBank(e.target.value)} /></label>}
+    {kind === 'deposit' && <>
+      <div className="form-grid"><label className="field"><span>Тип депозита</span><select required value={depositType} onChange={e => setDepositType(e.target.value as DepositType)}><option value="savings">Накопительный</option><option value="term">Срочный</option></select></label>
+        <label className="field"><span>Годовая ставка, % · необязательно</span><input inputMode="decimal" maxLength={16} placeholder="Например, 14,5" value={rate} onChange={e => setRate(e.target.value)} /></label></div>
+      <div className="form-grid"><label className="field"><span>Дата открытия · необязательно</span><input type="date" value={opened} onChange={e => setOpened(e.target.value)} /></label>
+        <label className="field"><span>Дата окончания · необязательно</span><input type="date" min={opened || undefined} value={ends} onChange={e => setEnds(e.target.value)} /></label></div>
+      <p className="ledger-hint">Дата открытия депозита не меняет начало учёта и баланс. Проценты банка добавляйте отдельным доходом.</p>
+    </>}
     <div className="form-grid"><label className="field"><span>Начальный баланс</span><input required inputMode="decimal" value={opening} onChange={e => setOpening(e.target.value)} /></label>
       <label className="field"><span>Дата начала учёта</span><input required type="date" value={date} onChange={e => setDate(e.target.value)} /></label></div>
     <p className="ledger-hint">Начальный баланс — остаток на начало выбранного дня. Операции этого дня и позже учитываются отдельно. Ранее этой даты операции добавить нельзя.</p>
@@ -52,6 +62,7 @@ export function OperationEditor({ item, data, onSave, onClose }: { item?: Operat
     <div className="form-grid"><label className="field"><span>{kind === 'transfer' ? 'Со счёта' : 'Счёт'}</span><select required value={account} onChange={e => { setAccount(e.target.value); setDestination('') }}><option value="">Выберите счёт</option>{options()}</select></label>
       {kind === 'transfer' ? <label className="field"><span>На счёт</span><select required value={destination} onChange={e => setDestination(e.target.value)}><option value="">Выберите счёт</option>{options(true)}</select></label> :
         <label className="field"><span>Категория</span><select required value={category} onChange={e => setCategory(e.target.value)}><option value="">Выберите категорию</option>{data.categories.filter(c => c.kind === kind && (!c.archived || c.id === category)).map(c => <option disabled={c.archived} value={c.id} key={c.id}>{c.name}{c.archived ? ' · архив' : ''}</option>)}</select></label>}</div>
+    {kind === 'income' && selected?.kind === 'deposit' && <p className="ledger-hint">Для начисленных банком процентов выберите категорию «Проценты по депозиту». Если её нет, добавьте категорию дохода с этим названием в разделе «Категории».</p>}
     {kind === 'transfer' && <p className="ledger-hint">Перевод между своими счетами в одной валюте. Пополнение и снятие с депозита не считаются доходом или расходом.</p>}
     <label className="field"><span>Дата</span><input required type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
     <label className="field"><span>Комментарий · необязательно</span><textarea maxLength={1000} rows={2} value={comment} onChange={e => setComment(e.target.value)} /></label>

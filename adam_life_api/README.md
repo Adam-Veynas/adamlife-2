@@ -8,7 +8,8 @@
 ## Что есть
 
 - FastAPI/Uvicorn; синхронный SQLAlchemy 2 и psycopg 3; Alembic.
-- Четыре PostgreSQL-миграции: базовые сущности, tenant/opening safeguards, авторизация, депозитный тип счёта.
+- Пять PostgreSQL-миграций: базовые сущности, tenant/opening safeguards, авторизация, депозитный тип счёта и его параметры.
+- Параметры депозитов: разновидность, годовая ставка, даты открытия/окончания. Миграция `0005_deposit`.
 - Пользователи, валюты, счета, категории, операции, расписания/экземпляры платежей,
   аудит, заготовка хранения ключей идемпотентности. Платежи пока представлены только схемой.
 - Финансовый CRUD: счета, категории, доходы, расходы, переводы; реальные балансы по валютам.
@@ -40,7 +41,7 @@ adam_life_web/start-adamlife.cmd. Вход Google включится после 
 ```text
 adam_life_api/
   app/                 # config, db, models, auth, auth_models, google_oidc, finance, errors, main
-  migrations/          # env.py, template, versions/0001, 0002, 0003, 0004
+  migrations/          # env.py, template, versions/0001–0005
   scripts/             # ручная настройка выделенной локальной БД и runtime-прав
   tests/               # HTTP/config/schema + opt-in настоящий PostgreSQL
   docs/decisions.md
@@ -225,3 +226,8 @@ Backend — отдельный Python web service, frontend остаётся н�
 Здесь не созданы платные сервисы, контейнеры, CI-аккаунты, реальные OAuth credentials,
 PDF-хранилище или аналитика. Frontend авторизации подключён. Реальный Google-вход
 и HTTPS на физическом iPhone остаются внешней приёмочной проверкой.
+
+
+### Накопления (локальный этап 2)
+
+Текущая схема: `0006_savings` (после неопубликованной `0005_deposit`). После обновления выполнить `python -m alembic upgrade head` и `scripts/grant-runtime.sql` от миграционной роли. В локальном окружении это уже выполнено. Новые API находятся под `/finance`: `savings`, `goals`, `goals/{id}/status`, `deposit-plans/{id}`. Цели и планы доступны только авторизованному пользователю; демоданные не переносятся. Правила распределений, архива и месячной истории описаны в `docs/decisions.md`, результаты — в `docs/verification.md`.

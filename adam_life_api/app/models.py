@@ -4,12 +4,13 @@ Money is signed BIGINT minor units, never a float. An account owns its currency.
 Composite foreign keys enforce tenant ownership even when application code errs.
 """
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey,
     ForeignKeyConstraint, Index, Integer, MetaData, String, Text,
-    UniqueConstraint, Uuid, func, text,
+    UniqueConstraint, Uuid, Numeric, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -67,10 +68,17 @@ class Account(Identity, Owned, Versioned, Base):
     opening_balance_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     opening_date: Mapped[date] = mapped_column(Date, nullable=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deposit_type: Mapped[str | None] = mapped_column(String(12))
+    annual_rate: Mapped[Decimal | None] = mapped_column(Numeric(9, 4))
+    deposit_opened_on: Mapped[date | None] = mapped_column(Date)
+    deposit_ends_on: Mapped[date | None] = mapped_column(Date)
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_accounts_owner_id"),
         UniqueConstraint("user_id", "id", "currency", name="uq_accounts_owner_id_currency"),
         CheckConstraint("kind IN ('bank', 'cash', 'deposit')", name="kind"),
+        CheckConstraint("deposit_type IN ('savings', 'term')", name="deposit_type"),
+        CheckConstraint("annual_rate >= 0 AND annual_rate <= 99999.9999", name="annual_rate"),
+        CheckConstraint("deposit_ends_on >= deposit_opened_on", name="deposit_dates"),
         CheckConstraint("length(trim(name)) > 0", name="name"),
         CheckConstraint("version > 0", name="version"),
         Index("ix_accounts_user_id", "user_id"),
@@ -228,4 +236,56 @@ class IdempotencyRecord(Identity, Owned, Base):
         CheckConstraint("length(key) > 0", name="key"),
         CheckConstraint("response_status BETWEEN 100 AND 599", name="status"),
         Index("ix_idempotency_records_expires_at", "expires_at"),
+    )
+
+
+class SavingsGoal(Identity, Owned, Versioned, Base):
+    __tablename__ = "savings_goals"
+    name: Mapped[str] = mapped_column(String(120))
+    currency: Mapped[str] = mapped_column(String(3), ForeignKey("currencies.code", ondelete="RESTRICT"))
+    target_minor: Mapped[int] = mapped_column(BigInteger)
+    mode: Mapped[str] = mapped_column(String(12))
+    manual_minor: Mapped[int | None] = mapped_column(BigInteger)
+    deadline: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(12), server_default="active")
+    archived_progress_minor: Mapped[int | None] = mapped_column(BigInteger)
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", "currency", name="uq_savings_goals_owner_currency"),
+        CheckConstraint("length(trim(name)) > 0", name="name"),
+        CheckConstraint("target_minor > 0 AND target_minor <= 9000000000000000", name="target"),
+        CheckConstraint("(mode = 'manual' AND manual_minor IS NOT NULL AND manual_minor >= 0 AND manual_minor <= 9000000000000000) OR (mode = 'linked' AND manual_minor IS NULL)", name="mode"),
+        CheckConstraint("status IN ('active', 'completed', 'archived')", name="status"),
+        CheckConstraint("version > 0", name="version"),
+        Index("ix_savings_goals_user_id", "user_id"),
+    )
+
+
+class GoalAllocation(Identity, Owned, Base):
+    __tablename__ = "goal_allocations"
+    goal_id: Mapped[UUID] = mapped_column(Uuid)
+    account_id: Mapped[UUID] = mapped_column(Uuid)
+    currency: Mapped[str] = mapped_column(String(3))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    __table_args__ = (
+        UniqueConstraint("goal_id", "account_id", name="uq_goal_allocations_goal_account"),
+        ForeignKeyConstraint(["user_id", "goal_id", "currency"], ["savings_goals.user_id", "savings_goals.id", "savings_goals.currency"], name="fk_goal_allocations_goal", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["user_id", "account_id", "currency"], ["accounts.user_id", "accounts.id", "accounts.currency"], name="fk_goal_allocations_account", ondelete="RESTRICT"),
+        CheckConstraint("amount_minor > 0 AND amount_minor <= 9000000000000000", name="amount"),
+        Index("ix_goal_allocations_user_id", "user_id"),
+    )
+
+
+class DepositPlanVersion(Identity, Owned, Versioned, Base):
+    __tablename__ = "deposit_plan_versions"
+    account_id: Mapped[UUID] = mapped_column(Uuid)
+    currency: Mapped[str] = mapped_column(String(3))
+    effective_month: Mapped[date] = mapped_column(Date)
+    amount_minor: Mapped[int | None] = mapped_column(BigInteger)
+    __table_args__ = (
+        UniqueConstraint("account_id", "effective_month", name="uq_deposit_plan_versions_account_month"),
+        ForeignKeyConstraint(["user_id", "account_id", "currency"], ["accounts.user_id", "accounts.id", "accounts.currency"], name="fk_deposit_plan_versions_account", ondelete="RESTRICT"),
+        CheckConstraint("amount_minor > 0 AND amount_minor <= 9000000000000000", name="amount"),
+        CheckConstraint("extract(day FROM effective_month) = 1", name="month"),
+        CheckConstraint("version > 0", name="version"),
+        Index("ix_deposit_plan_versions_user_id", "user_id"),
     )

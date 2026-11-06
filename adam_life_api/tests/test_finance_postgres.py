@@ -15,6 +15,7 @@ from app.auth_models import AuthSession
 from app.config import Settings
 from app.db import user_session
 from app.main import create_app
+from app.schema import SCHEMA_REVISION
 from app.models import Account, AuditEvent, Base, User
 from test_postgres import pg_engine, runtime_engine
 
@@ -85,7 +86,7 @@ def clients(runtime_engine):
 
 def test_online_finance_migration(pg_engine):
     with pg_engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004_finance"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == SCHEMA_REVISION
         assert compare_metadata(MigrationContext.configure(connection, opts={"compare_type": True, "compare_server_default": True}), Base.metadata) == []
 
 

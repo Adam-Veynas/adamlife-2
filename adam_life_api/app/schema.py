@@ -1,1 +1,1 @@
-SCHEMA_REVISION = "0004_finance"
+SCHEMA_REVISION = "0006_savings"
