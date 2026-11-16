@@ -114,8 +114,13 @@ class Transaction(Identity, Owned, Versioned, Base):
     comment: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(12), server_default="manual")
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    adjustment_type: Mapped[str | None] = mapped_column(String(20))
+    related_transaction_id: Mapped[UUID | None] = mapped_column(Uuid)
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_transactions_owner_id"),
+        ForeignKeyConstraint(["user_id", "related_transaction_id"], ["transactions.user_id", "transactions.id"], name="fk_transactions_adjustment", ondelete="RESTRICT"),
+        CheckConstraint("adjustment_type IN ('refund', 'reversal', 'fx', 'return_funds') AND kind <> 'transfer' OR adjustment_type IS NULL", name="adjustment_type"),
+        CheckConstraint("related_transaction_id IS NULL OR (adjustment_type IS NOT NULL AND related_transaction_id <> id)", name="adjustment_link"),
         # Used by a payment occurrence to reference an actual expense, not a transfer.
         UniqueConstraint("user_id", "id", "kind", "source_account_id", "source_currency", "source_amount_minor",
                          name="uq_transactions_payment_link"),
@@ -288,4 +293,66 @@ class DepositPlanVersion(Identity, Owned, Versioned, Base):
         CheckConstraint("extract(day FROM effective_month) = 1", name="month"),
         CheckConstraint("version > 0", name="version"),
         Index("ix_deposit_plan_versions_user_id", "user_id"),
+    )
+
+
+class ImportBatch(Identity, Owned, Base):
+    __tablename__ = 'import_batches'
+    status: Mapped[str] = mapped_column(String(12), default='draft')
+    file_hash: Mapped[str] = mapped_column(String(64))
+    bank_digest: Mapped[str] = mapped_column(String(64))
+    account_id: Mapped[UUID | None] = mapped_column(Uuid)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    result: Mapped[dict] = mapped_column(JSONB, default=dict)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint('user_id', 'id', name='uq_import_batches_owner_id'),
+        ForeignKeyConstraint(['user_id', 'account_id'], ['accounts.user_id', 'accounts.id'], name='fk_import_batches_account', ondelete='RESTRICT'),
+        CheckConstraint("status IN ('draft', 'committed', 'cancelled', 'undone')", name='status'),
+        Index('ix_import_batches_user_id', 'user_id'),
+    )
+
+
+class BankBinding(Identity, Owned, Base):
+    __tablename__ = 'bank_bindings'
+    bank_digest: Mapped[str] = mapped_column(String(64))
+    account_id: Mapped[UUID] = mapped_column(Uuid)
+    last_four: Mapped[str] = mapped_column(String(4))
+    __table_args__ = (
+        UniqueConstraint('user_id', 'bank_digest', name='uq_bank_bindings_digest'),
+        UniqueConstraint('user_id', 'account_id', name='uq_bank_bindings_account'),
+        ForeignKeyConstraint(['user_id', 'account_id'], ['accounts.user_id', 'accounts.id'], name='fk_bank_bindings_account', ondelete='RESTRICT'),
+    )
+
+
+class ImportRule(Identity, Owned, Versioned, Base):
+    __tablename__ = 'import_rules'
+    key: Mapped[str] = mapped_column(String(1000))
+    original: Mapped[str] = mapped_column(String(1000))
+    rule_type: Mapped[str] = mapped_column(String(12))
+    category_id: Mapped[UUID | None] = mapped_column(Uuid)
+    category_kind: Mapped[str | None] = mapped_column(String(12))
+    account_id: Mapped[UUID | None] = mapped_column(Uuid)
+    __table_args__ = (
+        UniqueConstraint('user_id', 'key', 'rule_type', name='uq_import_rules_key'),
+        ForeignKeyConstraint(['user_id', 'category_id', 'category_kind'], ['categories.user_id', 'categories.id', 'categories.kind'], name='fk_import_rules_category', ondelete='RESTRICT'),
+        ForeignKeyConstraint(['user_id', 'account_id'], ['accounts.user_id', 'accounts.id'], name='fk_import_rules_account', ondelete='RESTRICT'),
+        CheckConstraint("(rule_type = 'category' AND category_id IS NOT NULL AND category_kind IS NOT NULL AND account_id IS NULL) OR (rule_type = 'own_account' AND account_id IS NOT NULL AND category_id IS NULL AND category_kind IS NULL)", name='shape'),
+        Index('ix_import_rules_user_id', 'user_id'),
+    )
+
+
+class ImportMovement(Identity, Owned, Base):
+    __tablename__ = 'import_movements'
+    bank_digest: Mapped[str] = mapped_column(String(64))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    ordinal: Mapped[int] = mapped_column(Integer)
+    batch_id: Mapped[UUID] = mapped_column(Uuid)
+    transaction_id: Mapped[UUID] = mapped_column(Uuid)
+    __table_args__ = (
+        UniqueConstraint('user_id', 'bank_digest', 'fingerprint', 'ordinal', name='uq_import_movements_occurrence'),
+        ForeignKeyConstraint(['user_id', 'batch_id'], ['import_batches.user_id', 'import_batches.id'], name='fk_import_movements_batch', ondelete='RESTRICT'),
+        ForeignKeyConstraint(['user_id', 'transaction_id'], ['transactions.user_id', 'transactions.id'], name='fk_import_movements_transaction', ondelete='RESTRICT'),
+        CheckConstraint('ordinal > 0', name='ordinal'),
+        Index('ix_import_movements_user_id', 'user_id'),
     )

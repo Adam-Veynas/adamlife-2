@@ -1,4 +1,5 @@
 # Runtime lock: update deliberately and run tests before changing versions.
+pypdf==7.0.1
 PyJWT[crypto]==2.15.1
 cryptography==50.0.2
 cffi==2.1.1

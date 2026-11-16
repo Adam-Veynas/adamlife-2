@@ -21,7 +21,7 @@ export function depositDetails(account: Account): [string, string][] {
   ]
 }
 export interface Category { id: string; name: string; kind: 'income' | 'expense'; archived: boolean; version: number }
-export interface Operation { id: string; kind: Kind; account_id: string; destination_account_id: string | null; category_id: string | null; currency: Currency; amount_minor: string; occurred_on: string; comment: string; version: number }
+export interface Operation { id: string; kind: Kind; account_id: string; destination_account_id: string | null; category_id: string | null; currency: Currency; amount_minor: string; occurred_on: string; comment: string; version: number; adjustment_type?: 'refund' | 'reversal' | 'fx' | 'return_funds' | null; related_transaction_id?: string | null; expense_correction_minor?: string; correction_category_id?: string | null; adjustment_pending?: boolean }
 export interface Snapshot { as_of: string; accounts: Account[]; categories: Category[]; operations: Operation[]; balances: Record<Currency, { total_minor: string; current_minor: string; deposit_minor: string }> }
 export class FinanceError extends Error { constructor(public status: number, message: string) { super(message) } }
 export async function financeRequest<T>(path: string, csrf: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -52,15 +52,21 @@ export function formatMoney(value: string | bigint, currency: Currency): string 
   const n = BigInt(value), abs = n < 0n ? -n : n
   return `${n < 0n ? '−' : ''}${new Intl.NumberFormat('ru-RU').format(abs / 100n)}${abs % 100n ? ',' + (abs % 100n).toString().padStart(2, '0') : ''} ${{ KZT: '₸', USD: '$', EUR: '€' }[currency]}`
 }
+// Derived by the API from the linked original, never a second money movement.
+export function expenseCorrection(row: Operation) { return BigInt(row.expense_correction_minor ?? '0') }
+export function reportingKind(row: Operation) { return expenseCorrection(row) > 0n ? 'expense' : row.adjustment_type ? null : row.kind }
+export function reportingCategory(row: Operation) { return expenseCorrection(row) > 0n ? row.correction_category_id ?? null : row.category_id }
+export function reportingAmount(row: Operation) { return expenseCorrection(row) > 0n ? -expenseCorrection(row) : BigInt(row.amount_minor) }
 export function totals(rows: Operation[]) {
   let income = 0n, expense = 0n
-  for (const row of rows) { if (row.kind === 'income') income += BigInt(row.amount_minor); if (row.kind === 'expense') expense += BigInt(row.amount_minor) }
+  for (const row of rows) { const kind = reportingKind(row); if (kind === 'income') income += reportingAmount(row); if (kind === 'expense') expense += reportingAmount(row) }
   return { income, expense, net: income - expense }
 }
-export interface Filters { currency: Currency; account: string; kind: string; category: string; from: string; to: string }
+export interface Filters { currency: Currency; account: string; accounts?: string[]; kind: string; category: string; categoryUnassigned?: boolean; from: string; to: string }
 export function filterOperations(rows: Operation[], filter: Filters) {
   return rows.filter(row => row.currency === filter.currency && (!filter.account || row.account_id === filter.account || row.destination_account_id === filter.account) &&
-    (!filter.kind || row.kind === filter.kind) && (!filter.category || row.category_id === filter.category) &&
+    (!filter.accounts?.length || filter.accounts.includes(row.account_id) || (row.destination_account_id !== null && filter.accounts.includes(row.destination_account_id))) &&
+    (!filter.kind || (filter.kind === 'adjustment' ? !!row.adjustment_type : reportingKind(row) === filter.kind)) && (!filter.category || reportingCategory(row) === filter.category) && (!filter.categoryUnassigned || reportingCategory(row) === null) &&
     (!filter.from || row.occurred_on >= filter.from) && (!filter.to || row.occurred_on <= filter.to))
 }
 
@@ -68,4 +74,10 @@ export function movement(row: Operation, account: string): string {
   const negative = row.kind === 'expense' || (row.kind === 'transfer' && account === row.account_id)
   const positive = row.kind === 'income' || (row.kind === 'transfer' && account === row.destination_account_id)
   return `${negative ? '−' : positive ? '+' : ''}${formatMoney(row.amount_minor, row.currency)}`
+}
+
+// Hidden rate is intentionally omitted: the API preserves existing metadata.
+export function depositEditorValues(kind: Account['kind'], type: DepositType, opened: string, ends: string) {
+  if (kind === 'deposit' && opened && ends && ends < opened) throw new Error('Дата окончания не может быть раньше даты открытия')
+  return { deposit_type: kind === 'deposit' ? type : null, deposit_opened_on: kind === 'deposit' ? opened || null : null, deposit_ends_on: kind === 'deposit' ? ends || null : null }
 }

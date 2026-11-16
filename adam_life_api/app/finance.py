@@ -8,10 +8,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import or_, select, text
+from sqlalchemy.orm import object_session
 
 from app.auth import authenticated_session, csrf_token, require_origin
 from app.errors import APIError
-from app.models import Account, AuditEvent, Category, DepositPlanVersion, GoalAllocation, PaymentOccurrence, PaymentSchedule, Transaction, User
+from app.models import Account, AuditEvent, Category, DepositPlanVersion, GoalAllocation, PaymentOccurrence, PaymentSchedule, Transaction, User, BankBinding, ImportBatch, ImportRule
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 CurrencyCode = Literal["KZT", "USD", "EUR"]
@@ -63,6 +64,8 @@ class OperationInput(Input):
     category_id: UUID | None = None
     comment: str | None = Field(default=None, max_length=1000)
     expected_version: int | None = Field(default=None, ge=1)
+    adjustment_type: Literal['refund', 'reversal', 'fx', 'return_funds'] | None = None
+    related_transaction_id: UUID | None = None
 
 
 class VersionInput(Input):
@@ -148,12 +151,22 @@ def category_data(row):
 
 
 def operation_data(row):
+    original = None
+    if row.related_transaction_id:
+        session = object_session(row)
+        original = session.get(Transaction, row.related_transaction_id) if session else None
+    correction = bool(row.adjustment_type in ('refund', 'reversal', 'return_funds') and row.kind == 'income'
+                      and original and not original.deleted_at and original.kind == 'expense' and not original.adjustment_type)
     return dict(id=str(row.id), kind=row.kind, occurred_on=row.occurred_on.isoformat(),
                 account_id=str(row.destination_account_id if row.kind == "income" else row.source_account_id),
                 destination_account_id=str(row.destination_account_id) if row.kind == "transfer" else None,
                 currency=row.destination_currency if row.kind == "income" else row.source_currency,
                 amount_minor=str(row.destination_amount_minor if row.kind == "income" else row.source_amount_minor),
-                category_id=str(row.category_id) if row.category_id else None, comment=row.comment or "", version=row.version)
+                category_id=str(row.category_id) if row.category_id else None, comment=row.comment or "", version=row.version,
+                adjustment_type=row.adjustment_type, related_transaction_id=str(row.related_transaction_id) if row.related_transaction_id else None,
+                expense_correction_minor=str(row.destination_amount_minor) if correction else '0',
+                correction_category_id=str(original.category_id) if correction and original.category_id else None,
+                adjustment_pending=bool(row.adjustment_type and not row.related_transaction_id))
 
 
 def balances(accounts, operations, as_of):
@@ -234,7 +247,7 @@ def edit_account(identifier: UUID, body: AccountInput, auth=Depends(finance_sess
         if not body.opening_change_reason or not body.opening_change_reason.strip():
             fail("OPENING_REASON_REQUIRED", "Укажите причину изменения начального остатка или даты", 422)
         earlier = session.scalar(select(Transaction.id).where(or_(Transaction.source_account_id == row.id,
-                    Transaction.destination_account_id == row.id), Transaction.occurred_on < body.opening_date).limit(1))
+                    Transaction.destination_account_id == row.id), Transaction.occurred_on < body.opening_date, Transaction.deleted_at.is_(None)).limit(1))
         if earlier:
             fail("OPENING_BOUNDARY", "Дата начала учёта исключает существующие операции")
     if row.kind == "deposit" and body.kind != "deposit":
@@ -260,6 +273,8 @@ def delete_account(identifier: UUID, body: VersionInput, auth=Depends(finance_se
     session, uid = auth
     row = owned(session, Account, identifier)
     version(row, body.expected_version)
+    if session.scalar(select(BankBinding.id).where(BankBinding.account_id == row.id).limit(1)) or session.scalar(select(ImportRule.id).where(ImportRule.account_id == row.id).limit(1)) or session.scalar(select(ImportBatch.id).where(ImportBatch.account_id == row.id).limit(1)):
+        fail('ACCOUNT_IMPORT_HISTORY', 'Счёт связан с импортом. Архивируйте его.')
     if session.scalar(select(GoalAllocation.id).where(GoalAllocation.account_id == row.id).limit(1)) or session.scalar(select(DepositPlanVersion.id).where(DepositPlanVersion.account_id == row.id).limit(1)):
         fail("ACCOUNT_HAS_SAVINGS", "У счёта есть распределения или история плана. Архивируйте его")
     if account_history(session, row.id) or session.scalar(select(PaymentSchedule.id).where(PaymentSchedule.account_id == row.id).limit(1)) or session.scalar(select(PaymentOccurrence.id).where(PaymentOccurrence.account_id == row.id).limit(1)):
@@ -305,6 +320,8 @@ def delete_category(identifier: UUID, body: VersionInput, auth=Depends(finance_s
     row = owned(session, Category, identifier)
     version(row, body.expected_version)
     guard_other(row)
+    if session.scalar(select(ImportRule.id).where(ImportRule.category_id == row.id).limit(1)):
+        fail('CATEGORY_IMPORT_RULE', 'Категория используется правилом импорта. Измените правило или архивируйте категорию.')
     if session.scalar(select(Transaction.id).where(Transaction.category_id == row.id).limit(1)):
         fail("CATEGORY_HAS_HISTORY", "Категория используется в истории. Архивируйте её")
     audit(session, uid, row, "deleted", category_data(row))
@@ -350,6 +367,7 @@ def operation_values(session, body):
 def create_operation(body: OperationInput, auth=Depends(finance_session)):
     session, uid = auth
     row = Transaction(user_id=uid, **operation_values(session, body))
+    apply_adjustment(session, row, body)
     session.add(row)
     session.flush()
     audit(session, uid, row, "created", operation_data(row))
@@ -361,6 +379,43 @@ def payment_guard(session, identifier):
         fail("PAYMENT_LINKED", "Операция связана с обязательным платежом")
 
 
+def apply_adjustment(session, row, body):
+    if 'adjustment_type' in body.model_fields_set:
+        row.adjustment_type = body.adjustment_type
+    if 'related_transaction_id' in body.model_fields_set:
+        row.related_transaction_id = body.related_transaction_id
+    if row.kind == 'transfer' and row.adjustment_type:
+        fail('ADJUSTMENT_TRANSFER', 'Снимите признак корректировки перед преобразованием в перевод.', 422)
+    validate_adjustment(session, row)
+
+
+def validate_adjustment(session, row):
+    # Called by manual writes and imports under the same per-user transaction lock.
+    # Do not flush a partially edited row while validating its old dependants.
+    with session.no_autoflush:
+        _validate_adjustment(session, row)
+
+
+def _validate_adjustment(session, row):
+    if row.related_transaction_id:
+        other = owned(session, Transaction, row.related_transaction_id)
+        if not row.adjustment_type or other.adjustment_type or other.id == row.id or other.occurred_on > row.occurred_on:
+            fail('ADJUSTMENT_LINK', 'Некорректная связь с исходной операцией.', 422)
+        if other.kind == 'transfer':
+            fail('ADJUSTMENT_LINK', 'Отмену собственного перевода оформите обратным переводом между этими счетами.', 422)
+        account_id = row.destination_account_id if row.kind == 'income' else row.source_account_id
+        opposite = other.source_account_id == account_id if row.kind == 'income' else other.destination_account_id == account_id
+        if not opposite: fail('ADJUSTMENT_LINK', 'Исходная операция должна иметь противоположное движение по тому же счёту.', 422)
+        if row.adjustment_type in ('refund', 'reversal', 'return_funds'):
+            if row.kind != 'income' or other.kind != 'expense':
+                fail('ADJUSTMENT_LINK', 'Возврат расхода должен быть поступлением на счёт исходного расхода.', 422)
+            returned = sum(o.destination_amount_minor for o in session.scalars(select(Transaction).where(
+                Transaction.related_transaction_id == other.id, Transaction.deleted_at.is_(None),
+                Transaction.adjustment_type.in_(['refund', 'reversal', 'return_funds']))) if o.id != row.id)
+            if returned + row.destination_amount_minor > other.source_amount_minor:
+                fail('ADJUSTMENT_LIMIT', 'Сумма возвратов превышает невозвращённую часть расхода. Проверьте связь; неподтверждённую корректировку сохраните отдельно.', 422)
+
+
 @router.put("/operations/{identifier}")
 def edit_operation(identifier: UUID, body: OperationInput, auth=Depends(finance_session)):
     session, uid = auth
@@ -370,6 +425,10 @@ def edit_operation(identifier: UUID, body: OperationInput, auth=Depends(finance_
     before = operation_data(row)
     for key, value in operation_values(session, body).items():
         setattr(row, key, value)
+    apply_adjustment(session, row, body)
+    with session.no_autoflush:
+        for linked in session.scalars(select(Transaction).where(Transaction.related_transaction_id == row.id, Transaction.deleted_at.is_(None))):
+            validate_adjustment(session, linked)
     touch(row)
     audit(session, uid, row, "updated", {"before": before, "after": operation_data(row)})
     return operation_data(row)
@@ -381,6 +440,8 @@ def delete_operation(identifier: UUID, body: VersionInput, auth=Depends(finance_
     row = owned(session, Transaction, identifier)
     version(row, body.expected_version)
     payment_guard(session, identifier)
+    if session.scalar(select(Transaction.id).where(Transaction.related_transaction_id == identifier, Transaction.deleted_at.is_(None)).limit(1)):
+        fail('ADJUSTMENT_LINKED', 'Сначала удалите возврат или снимите его связь с исходной операцией.')
     audit(session, uid, row, "deleted", operation_data(row))
     row.deleted_at = datetime.now(timezone.utc)
     touch(row)
