@@ -32,7 +32,6 @@ export function BalanceHistoryChart({ points, format }: { points: { date: string
       <line x1={coords[selected].x} x2={coords[selected].x} y1="20" y2="187" stroke="var(--line-strong)" strokeDasharray="3 5" />
       {coords.map((p, i) => <circle key={points[i].date} cx={p.x} cy={p.y} r={i === selected ? 5 : 3} fill="var(--accent)"><title>{`${points[i].label}: ${format(points[i].amount)}`}</title></circle>)}
     </svg><div className="chart-x-labels">{[...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])].map(i => <span key={i}>{points[i].label}</span>)}</div>
-    <label className="chart-scrubber"><span>Выбрать месяц</span><input type="range" aria-label="Месяц на графике остатка" min={0} max={points.length - 1} value={selected} onChange={e => setActive(Number(e.target.value))} /></label>
   </div>
 }
 

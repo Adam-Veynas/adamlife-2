@@ -51,7 +51,7 @@ export function depositMovements(account: Account, operations: Operation[], cate
     if (op.kind === 'transfer') {
       if (op.destination_account_id === account.id) added += BigInt(op.amount_minor)
       if (op.account_id === account.id) withdrawn += BigInt(op.amount_minor)
-    } else if (op.kind === 'income' && op.account_id === account.id && op.category_id && interestCategories.has(op.category_id)) {
+    } else if (op.kind === 'income' && !op.adjustment_type && op.account_id === account.id && op.category_id && interestCategories.has(op.category_id)) {
       interest += BigInt(op.amount_minor)
     }
   }

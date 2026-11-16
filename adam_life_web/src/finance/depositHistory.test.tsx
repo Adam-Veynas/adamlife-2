@@ -25,9 +25,9 @@ describe('actual deposit balance chart', () => {
     h.points.forEach((_, i) => expect(chartPointIndex(12 + i / (months - 1) * 560, months)).toBe(i))
   })
   it('handles new and future account opening dates without inventing earlier money', () => {
-    expect(depositHistory({ ...account, opening_date: '2026-10-15' }, [], '2026-11-06', 3)!.points.map(p => p.amount)).toEqual([0n, 10000n, 10000n])
+    expect(depositHistory({ ...account, opening_date: '2026-10-15' }, [], '2026-11-06', 3)!.points.map(p => p.amount)).toEqual([10000n, 10000n])
     expect(depositHistory({ ...account, opening_date: '2026-09-01' }, [], '2026-11-06', 3)!.change).toBe(10000n)
-    expect(depositHistory({ ...account, opening_date: '2027-01-01' }, [], '2026-11-06', 3)!.points.every(p => p.amount === 0n)).toBe(true)
+    expect(depositHistory({ ...account, opening_date: '2027-01-01' }, [], '2026-11-06', 3)!.points).toEqual([])
   })
   it('ignores future, other-account, other-currency and pre-opening entries', () => {
     const excluded = [op('2026-11-07', 'income', '100'), op('2024-12-31', 'income', '100'), op('2026-10-01', 'income', '100', { currency: 'USD' }), op('2026-10-01', 'income', '100', { account_id: 'other' })]
@@ -47,6 +47,7 @@ describe('actual deposit balance chart', () => {
     expect(html).not.toMatch(/NaN|Infinity/)
     expect(html).toContain('role="slider"')
     expect(html).toContain('aria-valuemax="2"')
+    expect(html).not.toContain('type="range"')
   })
   it('crosses leap February and year boundaries correctly', () => {
     expect(depositHistory(account, [], '2028-03-01', 3)!.points.map(p => p.date)).toEqual(['2028-01-31', '2028-02-29', '2028-03-01'])

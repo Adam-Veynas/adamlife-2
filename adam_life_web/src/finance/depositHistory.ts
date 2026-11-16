@@ -39,7 +39,7 @@ export function depositHistory(account: Account, operations: Operation[], asOf: 
     if (!openingApplied && account.opening_date <= cutoff) { balance += opening; openingApplied = true }
     while (cursor < entries.length && entries[cursor].op.occurred_on <= cutoff) balance += entries[cursor++].delta
     const label = new Intl.DateTimeFormat('ru-RU', { month: 'short', year: '2-digit', timeZone: 'UTC' }).format(end)
-    points.push({ date: cutoff, label, amount: balance })
+    if (cutoff >= account.opening_date) points.push({ date: cutoff, label, amount: balance })
   }
   return { start, points, baseline, change: balance - baseline, added, withdrawn }
 }

@@ -12,6 +12,7 @@ from app.errors import APIError, ErrorResponse, JSONCORSMiddleware, error_respon
 from app.auth import router as auth_router
 from app.finance import router as finance_router
 from app.savings import router as savings_router
+from app.kaspi_import import router as import_router
 from app.google_oidc import GoogleOIDC
 
 logger = logging.getLogger("adamlife.api")
@@ -48,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(finance_router)
     app.include_router(savings_router)
+    app.include_router(import_router)
     register_errors(app)
 
     @app.middleware("http")

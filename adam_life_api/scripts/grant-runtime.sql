@@ -5,7 +5,7 @@ GRANT USAGE ON SCHEMA public TO adamlife_app;
 GRANT SELECT ON currencies, alembic_version TO adamlife_app;
 GRANT SELECT, INSERT, UPDATE ON users TO adamlife_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
-    accounts, categories, transactions, payment_schedules, payment_occurrences, idempotency_records, savings_goals, goal_allocations, deposit_plan_versions
+    accounts, categories, transactions, payment_schedules, payment_occurrences, idempotency_records, savings_goals, goal_allocations, deposit_plan_versions, import_batches, bank_bindings, import_rules, import_movements
     TO adamlife_app;
 GRANT SELECT, INSERT ON audit_events TO adamlife_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON login_flows, auth_sessions TO adamlife_app;
