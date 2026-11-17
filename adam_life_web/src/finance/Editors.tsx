@@ -60,7 +60,7 @@ export function OperationEditor({ item, preset, data, onSave, onClose }: { item?
   const [adjustment, setAdjustment] = useState<Operation['adjustment_type']>(item?.adjustment_type ?? null)
   const [related, setRelated] = useState(item?.related_transaction_id ?? '')
   const selected = data.accounts.find(a => a.id === account)
-  const options = (target = false) => data.accounts.filter(a => (!a.archived || a.id === (target ? destination : account)) && (!target || (a.id !== account && a.currency === selected?.currency))).map(a => <option key={a.id} value={a.id} disabled={a.archived}>{a.name} · {a.currency}{a.archived ? ' · архив' : ''}</option>)
+  const options = (target = false) => data.accounts.filter(a => (!a.archived || a.id === (target ? destination : account)) && (!target || (a.id !== account && a.currency === selected?.currency))).map(a => <option key={a.id} value={a.id} disabled={a.archived}>{a.name} · {formatMoney(a.balance_minor, a.currency)} · {a.currency}{a.archived ? ' · архив' : ''}</option>)
   return <Editor title={item ? 'Редактировать операцию' : 'Новая операция'} onClose={onClose} submit={() => onSave('operations' + (item ? '/' + item.id : ''), item ? 'PUT' : 'POST', {
     kind, amount_minor: parseMinor(amount), occurred_on: date, account_id: account, destination_account_id: kind === 'transfer' ? destination || null : null,
     category_id: kind === 'transfer' ? null : category || null, comment: comment || null, expected_version: item?.version,

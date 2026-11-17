@@ -3,6 +3,7 @@ from collections import Counter
 from datetime import date, timedelta
 from hashlib import sha256
 import json
+import re
 import subprocess
 import sys
 from typing import Literal
@@ -66,13 +67,17 @@ def parse_isolated(content):
 
 @router.post('/kaspi', status_code=201)
 async def upload(request: Request, auth=Depends(finance_session)):
-    if request.headers.get('content-type', '').split(';')[0] != 'application/pdf':
-        fail('PDF_REQUIRED', 'Загрузите PDF-выписку Kaspi Gold.', 415)
+    # Browser File.type can be empty/octet-stream. Validate the bounded bytes, not MIME.
+    if request.headers.get('content-type', '').lower().startswith('multipart/'):
+        fail('PDF_UPLOAD_FORMAT', 'Передайте PDF как файл без multipart-обёртки.', 415)
     data = bytearray()
     async for chunk in request.stream():
         data.extend(chunk)
         if len(data) > MAX_BYTES:
             fail('PDF_TOO_LARGE', 'Размер PDF не должен превышать 5 МБ.', 413)
+    expected = request.headers.get('content-length')
+    if not data or (expected and expected.isdigit() and int(expected) != len(data)):
+        fail('PDF_UPLOAD_INCOMPLETE', 'Файл передан не полностью. Выберите сохранённый на устройстве PDF ещё раз.', 422)
     if not data.startswith(b'%PDF-'):
         fail('PDF_REQUIRED', 'Содержимое файла не является PDF.', 415)
     statement = await run_in_threadpool(parse_isolated, bytes(data))
@@ -108,6 +113,8 @@ def suggest(row, rules, categories):
     adjustment = 'reversal' if 'отмена' in full else 'fx' if 'курсов' in full else 'refund' if ('возврат' in full or (positive and row['bank_type'] == 'Покупка')) else None
     own = next((rule for rule in rules if rule.rule_type == 'own_account' and rule.key == description[0]), None)
     rule = next((rule for rule in rules if rule.rule_type == 'category' and rule.key == description[0] and rule.category_kind == kind), None)
+    merchant = re.sub(r'[.*_]+', ' ', description[0])
+    merchant = ' '.join(merchant.split())
     category_name, review = 'Другое', True
     if 'комисси' in full:
         category_name, review = 'Банковские комиссии', False
@@ -115,13 +122,16 @@ def suggest(row, rules, categories):
         category_name, review = 'Переводы людям', False
     elif 'зарплат' in full and positive:
         category_name, review = 'Зарплата', False
-    elif description[0] in ('гелиос', 'helios', 'тоо гелиос'):
+    elif merchant in ('гелиос', 'helios', 'тоо гелиос'):
         category_name, review = 'Топливо', False
-    elif description[0] in ('tele2', 'теле2'):
+    elif merchant in ('tele2', 'теле2'):
         category_name, review = 'Связь', False
-    elif description[0] in ('openai chatgpt subscr', 'yandex.plus'):
+    elif merchant in ('openai chatgpt subscr', 'yandex plus'):
         category_name, review = 'Подписки', False
-    category = next((c for c in categories if c.kind == kind and normalize(c.name) == normalize(category_name) and not c.archived_at), None)
+    names = {normalize(category_name)}
+    if category_name == 'Банковские комиссии': names.add('комиссии')
+    category = next((c for c in categories if c.kind == kind and normalize(c.name) in names and not c.archived_at), None)
+    if category: category_name = category.name
     if rule:
         matched = next((c for c in categories if c.id == rule.category_id and not c.archived_at), None)
         if matched: category, category_name, review = matched, matched.name, False
@@ -154,6 +164,10 @@ def prepare(session, batch, body):
     known = {(e.fingerprint, e.ordinal): e for e in evidence if e.bank_digest == batch.bank_digest}
     counts = Counter(e.fingerprint for e in known.values())
     incoming_counts = Counter(r['fingerprint'] for r in batch.payload['rows'])
+    by_movement = {}
+    for operation in operations:
+        if not operation.deleted_at:
+            by_movement.setdefault((str(operation.occurred_on), signed_movement(operation, account.id)), []).append(operation)
     choices = {c.index: c for c in body.choices}
     if len(choices) != len(body.choices) or any(index >= len(batch.payload['rows']) for index in choices):
         fail('IMPORT_CHOICES', 'Список решений не соответствует выписке.', 422)
@@ -162,7 +176,7 @@ def prepare(session, batch, body):
         suggestion = suggest(raw, rules, categories)
         choice = choices.get(raw['index'], Choice(index=raw['index']))
         previous = known.get((raw['fingerprint'], raw['ordinal']))
-        same = [o for o in operations if not o.deleted_at and str(o.occurred_on) == raw['date'] and signed_movement(o, account.id) == int(raw['signed_minor'])]
+        same = by_movement.get((raw['date'], int(raw['signed_minor'])), [])
         item = {**raw, **suggestion, 'action': choice.action, 'duplicate_id': str(previous.transaction_id) if previous else None,
                 'candidates': [operation_data(o) for o in same], 'reviewed': choice.reviewed, 'related_id': str(choice.related_id) if choice.related_id else None,
                 'remember_category': choice.remember_category, 'remember_account': choice.remember_account}
@@ -208,6 +222,7 @@ def prepare(session, batch, body):
     projected += sum(int(item['signed_minor']) for item in selected if item['status'] not in ('skip', 'duplicate', 'before_opening') and item['action'] == 'add')
     return dict(rows=selected, revision=ledger_revision(accounts, operations, rules, evidence), before_minor=str(before), projected_minor=str(projected),
                 difference_minor=str(projected - int(batch.payload['closing_minor'])), opening_date=str(account.opening_date), opening_minor=str(account.opening_balance_minor),
+                before_opening=sum(i['status'] == 'before_opening' for i in selected),
                 found=len(selected), duplicates=sum(i['status'] == 'duplicate' for i in selected),
                 review=sum(i['status'] in ('review', 'before_opening') for i in selected),
                 new=sum(i['status'] == 'new' for i in selected), own_transfers=sum(i['kind'] == 'transfer' or i['own_hint'] for i in selected)), account

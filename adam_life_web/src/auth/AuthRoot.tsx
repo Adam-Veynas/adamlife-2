@@ -22,19 +22,23 @@ export function AuthRoot() {
       window.history.replaceState(null, '', url.pathname + url.search + url.hash)
     }
     void controller.restore()
-    const refresh = () => { if (document.visibilityState === 'visible' && controller.snapshot().kind !== 'demo') void controller.restore() }
-    const hide = () => { if (controller.snapshot().kind !== 'demo') controller.lock() }
+    let checking = false
+    const refresh = () => {
+      if (!checking && document.visibilityState === 'visible' && controller.snapshot().kind !== 'demo') {
+        checking = true; void controller.restore().finally(() => { checking = false })
+      }
+    }
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('adamlife-auth')
     if (channel) channel.onmessage = () => { if (controller.snapshot().kind !== 'demo') { controller.lock(); refresh() } }
     const interval = window.setInterval(refresh, 60000)
     window.addEventListener('focus', refresh)
     window.addEventListener('pageshow', refresh)
-    window.addEventListener('pagehide', hide)
+    window.addEventListener('online', refresh)
     document.addEventListener('visibilitychange', refresh)
     return () => {
       channel?.close(); clearInterval(interval)
       window.removeEventListener('focus', refresh); window.removeEventListener('pageshow', refresh)
-      window.removeEventListener('pagehide', hide); document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('online', refresh); document.removeEventListener('visibilitychange', refresh)
       controller.lock()
     }
   }, [])
@@ -49,7 +53,7 @@ export function AuthRoot() {
       const channel = new BroadcastChannel('adamlife-auth'); channel.postMessage('signed-out'); channel.close()
     }
   }
-  if (state.kind === 'authenticated') return <FinancialWorkspace key={state.session.user.id} session={state.session} onLogout={() => void logout()} onUnauthorized={() => { controller.lock(); void controller.restore() }} />
+  if (state.kind === 'authenticated') return <>{state.offline && <div className="auth-demo-bar" role="status">Нет связи с сервером. Повторим проверку автоматически.</div>}<FinancialWorkspace key={state.session.user.id} session={state.session} onLogout={() => void logout()} onUnauthorized={() => { controller.lock(); void controller.restore() }} /></>
   if (state.kind === 'demo') return <><div className="auth-demo-bar"><span>Демонстрация · не данные аккаунта</span><button onClick={() => void controller.restore()}>Завершить просмотр</button></div><Suspense fallback={<div className="auth-screen">Загрузка демонстрации…</div>}><Demo /></Suspense></>
   return <main className="auth-screen"><section className="auth-card"><Brand />
     <span className="auth-eyebrow">ЛИЧНОЕ ФИНАНСОВОЕ ПРОСТРАНСТВО</span>

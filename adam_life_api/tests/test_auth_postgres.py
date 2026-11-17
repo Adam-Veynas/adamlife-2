@@ -252,7 +252,7 @@ def test_expired_or_revoked_sessions(oidc, runtime_engine, mode):
     with browser(oidc) as client:
         client.login()
         changes = {"absolute": {"expires_at": now() - timedelta(seconds=1)},
-                   "idle": {"last_seen_at": now() - timedelta(days=2)},
+                   "idle": {"last_seen_at": now() - timedelta(seconds=client.settings.session_idle_seconds + 1)},
                    "revoked": {"revoked_at": now()}}[mode]
         alter_session(runtime_engine, client.token(), **changes)
         result = client.request("GET", "/auth/me")
@@ -370,3 +370,12 @@ def test_logout_does_not_revoke_another_browser_session(oidc):
         assert first.request("POST", "/auth/logout", headers={
             "Origin": ORIGIN, "X-CSRF-Token": a["csrf_token"]}).status_code == 204
         assert second.request("GET", "/auth/me").status_code == 200
+
+
+def test_thirty_day_cookie_and_session_survive_long_idle(oidc, runtime_engine):
+    with browser(oidc) as client:
+        response = client.callback(client.start())
+        assert any('Max-Age=2592000' in value for value in response.headers.get_list('set-cookie'))
+        assert client.settings.session_lifetime_seconds == 30 * 86400
+        alter_session(runtime_engine, client.token(), last_seen_at=now() - timedelta(days=29))
+        assert client.request('GET', '/auth/me').status_code == 200

@@ -3,7 +3,7 @@ import { AuthError, authAPI, type Session } from './client'
 export type AuthState =
   | { kind: 'loading' }
   | { kind: 'anonymous'; enabled: boolean }
-  | { kind: 'authenticated'; session: Session }
+  | { kind: 'authenticated'; session: Session; offline?: boolean }
   | { kind: 'error'; message: string }
   | { kind: 'demo' }
 
@@ -37,7 +37,10 @@ export class AuthController {
         } catch {
           if (generation === this.generation) this.set({ kind: 'error', message: 'Не удалось связаться с сервером. Проверьте соединение.' })
         }
-      } else this.set({ kind: 'error', message: 'Не удалось проверить сессию. Ваши данные сейчас скрыты.' })
+      } else if (this.state.kind === 'authenticated' && Date.parse(this.state.session.expires_at) > Date.now()) {
+        // A transport failure is not a revoked session; API writes still require server auth.
+        this.set({ ...this.state, offline: true })
+      } else this.set({ kind: 'error', message: 'Не удалось проверить сессию. Повторите проверку соединения.' })
     }
   }
   async login(): Promise<string | undefined> {

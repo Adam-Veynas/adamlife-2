@@ -44,8 +44,8 @@ class Settings(BaseSettings):
     google_redirect_uri: str = "http://localhost:5173/api/auth/google/callback"
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
-    session_lifetime_seconds: int = Field(default=604800, ge=60, le=2592000)
-    session_idle_seconds: int = Field(default=86400, ge=60, le=604800)
+    session_lifetime_seconds: int = Field(default=2592000, ge=60, le=2592000)
+    session_idle_seconds: int = Field(default=2592000, ge=60, le=2592000)
 
     @model_validator(mode="after")
     def auth_configuration(self) -> "Settings":
