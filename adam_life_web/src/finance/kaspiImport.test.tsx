@@ -99,3 +99,9 @@ describe('Net expense corrections', () => {
     expect(html).toContain('Исходная операция'); expect(html).toContain('Не подтверждена'); expect(html).toContain('value="original"')
   })
 })
+
+ it('shows current exact balances and currencies in both transfer selectors', () => {
+   const account = { id: 'a', name: 'From', kind: 'bank' as const, bank_code: null, currency: 'KZT' as const, opening_date: '2026-01-01', opening_balance_minor: '0', balance_minor: '12345678', archived: false, version: 1 }
+   const html = renderToStaticMarkup(<OperationEditor item={transfer} data={{ ...data, accounts: [account, { ...account, id: 'b', name: 'To', balance_minor: '12345' }] }} onSave={async () => {}} onClose={noop} />)
+   expect(html).toContain('123 456,78 ₸ · KZT'); expect(html).toContain('123,45 ₸ · KZT')
+ })

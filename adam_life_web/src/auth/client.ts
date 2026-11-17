@@ -6,7 +6,7 @@ export class AuthError extends Error {
 
 export async function authRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch('/api/auth/' + path, {
-    ...options, credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(10000),
+    ...options, credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(60000),
     headers: { Accept: 'application/json', ...options.headers },
   })
   if (!response.ok) {

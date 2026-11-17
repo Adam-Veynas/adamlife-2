@@ -40,13 +40,14 @@ describe('server sessions and memory isolation', () => {
     auth.demo()
     expect(auth.snapshot()).toEqual({ kind: 'demo' })
   })
-  it('clears the previous user on failed session validation', async () => {
+  it('preserves an unexpired session and editor through a temporary network failure', async () => {
     const server = api(), auth = new AuthController(server)
     await auth.restore()
     server.me.mockRejectedValue(new Error('offline'))
     await auth.restore()
-    expect(auth.snapshot().kind).toBe('error')
-    expect(JSON.stringify(auth.snapshot())).not.toContain('alice')
+    expect(auth.snapshot()).toEqual({ kind: 'authenticated', session: user(), offline: true })
+    server.me.mockResolvedValue(user()); await auth.restore()
+    expect(auth.snapshot()).toEqual({ kind: 'authenticated', session: user() })
   })
   it('does not accept an old response after another user logged in', async () => {
     const old = deferred<Session>(), server = api()
@@ -126,3 +127,16 @@ describe('API transport', () => {
     expect(await authRequest('logout', { method: 'POST' })).toBeUndefined()
   })
 })
+
+ it('hides an authenticated user when the server confirms revocation, even after offline mode', async () => {
+   const server = api(), auth = new AuthController(server)
+   await auth.restore(); server.me.mockRejectedValueOnce(new Error('offline')); await auth.restore()
+   server.me.mockRejectedValueOnce(new AuthError(401, 'SESSION_EXPIRED')); await auth.restore()
+   expect(auth.snapshot().kind).toBe('anonymous'); expect(JSON.stringify(auth.snapshot())).not.toContain('alice')
+ })
+ it('does not retain an expired session on network failure', async () => {
+   const server = api(), auth = new AuthController(server)
+   server.me.mockResolvedValueOnce({ ...user(), expires_at: '2000-01-01T00:00:00Z' })
+   await auth.restore(); server.me.mockRejectedValueOnce(new Error('offline')); await auth.restore()
+   expect(auth.snapshot().kind).toBe('error'); expect(JSON.stringify(auth.snapshot())).not.toContain('alice')
+ })
