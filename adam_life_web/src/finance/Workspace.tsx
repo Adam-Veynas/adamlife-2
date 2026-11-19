@@ -13,12 +13,16 @@ import { OperationRows } from './OperationRows'
 import { KaspiImport } from './KaspiImport'
 import { FinancialAnalytics } from './FinancialAnalytics'
 import type { AnalyticsDrilldown } from './analytics'
+import { useAppNavigation } from '../hooks/useAppNavigation'
 import './finance.css'
 
-type Dialog = ({ type: 'import' } | { type: 'accountDetail'; item: Account; tab?: DepositTab } | { type: 'account'; item?: Account; initialKind?: Account['kind'] } | { type: 'category'; item?: Category } | { type: 'operation'; item?: Operation; preset?: TransferPreset } | { type: 'detail'; item: Operation } | { type: 'confirm'; title: string; description: string; action: () => Promise<void> }) & { returnDeposit?: string } | null
+type Dialog = ({ type: 'import' } | { type: 'accountDetail'; item: Account; tab?: DepositTab } | { type: 'account'; item?: Account; initialKind?: Account['kind'] } | { type: 'category'; item?: Category } | { type: 'operation'; item?: Operation; preset?: TransferPreset } | { type: 'detail'; item: Operation } | { type: 'confirm'; actionLabel: string; title: string; description: string; action: () => Promise<void> }) & { returnDeposit?: string } | null
 export function FinancialWorkspace({ session, onLogout, onUnauthorized }: { session: Session; onLogout: () => void; onUnauthorized: () => void }) {
   const [data, setData] = useState<Snapshot | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(true)
-  const [view, setView] = useState<View>('overview'), [manage, setManage] = useState<'accounts' | 'categories' | null>(null), [dialog, setDialog] = useState<Dialog>(null)
+  const [dialog, setDialog] = useState<Dialog>(null)
+  const appNavigation = useAppNavigation(() => setDialog(null))
+  const { view, manage } = appNavigation.route
+  const setManage = (next: 'accounts' | 'categories' | null) => appNavigation.go({ view, manage: next })
   const [currency, setCurrency] = useState<Currency>('KZT'), [account, setAccount] = useState(''), [kind, setKind] = useState(''), [category, setCategory] = useState('')
   const [historyAccounts, setHistoryAccounts] = useState<string[]>([])
   const [from, setFrom] = useState(localDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1))), [to, setTo] = useState(''), [archive, setArchive] = useState(false)
@@ -56,7 +60,7 @@ export function FinancialWorkspace({ session, onLogout, onUnauthorized }: { sess
     setDialog(deposit ? { type: 'accountDetail', item: deposit, tab: 'history' } : null)
   }
   const detailAccount = dialog?.type === 'accountDetail' ? data?.accounts.find(a => a.id === dialog.item.id) ?? dialog.item : null
-  function navigate(next: View) { setView(next); setManage(null); close(); window.scrollTo({ top: 0, behavior: 'instant' }) }
+  function navigate(next: View) { appNavigation.go({ view: next, manage: null }); setDialog(null); window.scrollTo({ top: 0, behavior: 'instant' }) }
   const rows = data ? filterOperations(data.operations, { currency, account, accounts: historyAccounts, kind, category: category === '__unassigned' ? '' : category, categoryUnassigned: category === '__unassigned', from, to }) : []
   const monthly = data ? totals(filterOperations(data.operations, { currency, account: '', kind: '', category: '', from: data.as_of.slice(0, 7) + '-01', to: data.as_of })) : totals([])
   const summary = totals(rows), balance = data?.balances[currency]
@@ -71,18 +75,18 @@ export function FinancialWorkspace({ session, onLogout, onUnauthorized }: { sess
     setFrom(filter.from); setTo(filter.to); setKind(filter.kind); setCategory(filter.category ?? '__unassigned'); navigate('transactions')
   }
   function archiveItem(item: Account | Category, type: 'accounts' | 'categories') {
-    setDialog({ type: 'confirm', title: item.archived ? 'Восстановить из архива?' : 'Архивировать?', description: 'История и остатки сохраняются. Новые операции доступны только для активных счетов и категорий.',
+    setDialog({ type: 'confirm', actionLabel: item.archived ? 'Восстановить' : 'В архив', title: item.archived ? 'Восстановить из архива?' : 'Архивировать?', description: 'История и остатки сохраняются. Новые операции доступны только для активных счетов и категорий.',
       action: () => save(`${type}/${item.id}`, 'PUT', { ...(type === 'accounts' ? { name: item.name, kind: item.kind, bank_code: (item as Account).bank_code, currency: (item as Account).currency, opening_balance_minor: (item as Account).opening_balance_minor, opening_date: (item as Account).opening_date } : { name: item.name, kind: item.kind }), archived: !item.archived, expected_version: item.version }) })
   }
   function remove(item: Account | Category | Operation, type: 'accounts' | 'categories' | 'operations') {
-    setDialog({ type: 'confirm', returnDeposit: dialog?.returnDeposit, title: 'Удалить запись?', description: type === 'operations' ? 'Баланс затронутых счетов будет пересчитан. Действие останется в аудите.' : 'Удаление доступно только без истории операций. Начальный остаток удаляемого счёта также исключается из общего баланса.', action: () => save(`${type}/${item.id}`, 'DELETE', { expected_version: item.version }) })
+    setDialog({ type: 'confirm', actionLabel: 'Удалить', returnDeposit: dialog?.returnDeposit, title: 'Удалить запись?', description: type === 'operations' ? 'Баланс затронутых счетов будет пересчитан. Действие останется в аудите.' : 'Удаление доступно только без истории операций. Начальный остаток удаляемого счёта также исключается из общего баланса.', action: () => save(`${type}/${item.id}`, 'DELETE', { expected_version: item.version }) })
   }
   function operationList(items: Operation[]) {
     return <section className="panel ledger-history"><div className="panel-heading"><h2>{view === 'overview' ? 'Последние операции' : 'История операций'}</h2>{view === 'overview' && <button className="text-action" onClick={() => navigate('transactions')}>Все операции</button>}</div>
       {data && <OperationRows items={items} data={data} accountId={view === 'transactions' ? account : ''} onSelect={item => setDialog({ type: 'detail', item })} />}
     </section>
   }
-  return <Layout view={view} onNavigate={navigate} onAdd={data ? add : undefined} accountControl={<button className="button secondary auth-logout" onClick={onLogout}><LogOut size={16} />Выйти</button>}>
+  return <Layout historyNavigation={appNavigation} view={view} onNavigate={navigate} onAdd={data ? add : undefined} accountControl={<button className="button secondary auth-logout" onClick={onLogout}><LogOut size={16} />Выйти</button>}>
     <div className="page-content ledger"><header className="page-header"><div><h1>{manage === 'accounts' ? 'Мои счета' : manage === 'categories' ? 'Категории' : navigation.find(n => n.id === view)?.title}</h1><p>{session.user.display_name}</p></div>{data && <button className="button primary desktop-add" onClick={add}><Plus size={17} />Добавить операцию</button>}</header>
       <div className="ledger-tools"><button className="button secondary" onClick={() => setDialog({ type: 'import' })} disabled={!data}>Импорт выписки</button><button className="button secondary" onClick={() => { setManage(manage === 'accounts' ? null : 'accounts'); setArchive(false) }}>Счета</button><button className="button secondary" onClick={() => { setManage(manage === 'categories' ? null : 'categories'); setArchive(false) }}>Категории</button><label className="field"><span className="sr-only">Валюта сводки</span><select aria-label="Валюта сводки" value={currency} onChange={e => { setCurrency(e.target.value as Currency); setAccount(''); setHistoryAccounts([]) }}>{['KZT', 'USD', 'EUR'].map(c => <option key={c}>{c}</option>)}</select></label><button className="text-action" onClick={() => void refresh().catch(e => { if (e instanceof FinanceError && e.status === 401) unauthorized.current(); else setError('Не удалось обновить данные') })}>Обновить</button></div>
       {loading && <p role="status">Загружаем ваши финансы…</p>}{error && <p role="alert" className="form-error">{error}</p>}
@@ -116,7 +120,7 @@ export function FinancialWorkspace({ session, onLogout, onUnauthorized }: { sess
     {dialog?.type === 'account' && <AccountEditor item={dialog.item} initialKind={dialog.initialKind} onSave={save} onClose={close} />}
     {dialog?.type === 'category' && <CategoryEditor item={dialog.item} onSave={save} onClose={close} />}
     {dialog?.type === 'operation' && data && <OperationEditor item={dialog.item} preset={dialog.preset} data={data} onSave={save} onClose={close} />}
-    {dialog?.type === 'confirm' && <Confirm title={dialog.title} description={dialog.description} action={dialog.action} onClose={close} />}
+    {dialog?.type === 'confirm' && <Confirm actionLabel={dialog.actionLabel} title={dialog.title} description={dialog.description} action={dialog.action} onClose={close} />}
     {dialog?.type === 'detail' && <Modal title="Детали операции" onClose={close}><div className={`detail-hero operation-${dialog.item.kind}`}><strong className="operation-amount">{movement(dialog.item, dialog.returnDeposit ?? account)}</strong><span>{dialog.item.adjustment_type ? (BigInt(dialog.item.expense_correction_minor ?? '0') > 0n ? 'Возврат уменьшает расходы исходной категории в дату поступления' : dialog.item.adjustment_pending ? 'Неподтверждённая корректировка: требуется проверка связи. Учитывается только в остатке' : 'Курсовая корректировка: учитывается в остатке, не является доходом') : dialog.item.kind === 'transfer' ? 'Перевод между своими счетами' : categoryName(dialog.item.category_id)}</span></div><dl className="detail-list"><div><dt>Счёт</dt><dd>{label(dialog.item)}</dd></div><div><dt>Дата</dt><dd>{dialog.item.occurred_on}</dd></div><div><dt>Комментарий</dt><dd>{dialog.item.comment || 'Не указан'}</dd></div></dl><div className="modal-actions"><button className="button danger-text" onClick={() => remove(dialog.item, 'operations')}>Удалить</button><button className="button primary" onClick={() => setDialog({ type: 'operation', item: dialog.item, returnDeposit: dialog.returnDeposit })}><Pencil size={16} />Изменить</button></div></Modal>}
   </Layout>
 }

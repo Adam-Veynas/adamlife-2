@@ -346,3 +346,8 @@ main { padding-bottom: 48px; }
 }
 @media(min-width:651px) and (max-width:900px) { main { padding-bottom: 120px; } }
 @media(prefers-reduced-motion:reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+
+.history-navigation{display:flex;gap:2px;flex-shrink:0;align-items:center}
+.history-navigation .icon-button{width:44px;height:44px;min-width:44px}
+.history-navigation button:disabled{opacity:.3;cursor:default;pointer-events:none}
+.topbar:has(.history-navigation){gap:8px;flex-wrap:wrap}

@@ -8,25 +8,27 @@ import { MarkPaymentPaid, PaymentDetail, PaymentEditor, Payments } from './compo
 import { monthLabel, type FinanceFilter, type OperationFilter, type Transaction, type TransactionType, type View } from './domain/finance'
 import type { Payment, PaymentOccurrence } from './domain/payments'
 import { useFinance } from './hooks/useFinance'
+import { useAppNavigation } from './hooks/useAppNavigation'
 
 type DialogState = { kind: 'new'; type: TransactionType } | { kind: 'detail'; item: Transaction } | { kind: 'edit'; item: Transaction } | { kind: 'delete'; item: Transaction } | { kind: 'payment-new' } | { kind: 'payment-edit'; payment: Payment } | { kind: 'payment-detail'; row: PaymentOccurrence } | { kind: 'payment-paid'; row: PaymentOccurrence } | { kind: 'import' | 'info' } | null
 
 export function App() {
   const finance = useFinance()
-  const [view, setView] = useState<View>('overview')
   const [filter, setFilter] = useState<OperationFilter>({ month: new Date(new Date().getFullYear(), new Date().getMonth(), 1), period: 'month', account: 'all', query: '', kind: 'all', category: '', sort: 'date-desc' })
   const [dialog, setDialog] = useState<DialogState>(null)
+  const appNavigation = useAppNavigation(() => setDialog(null))
+  const { view } = appNavigation.route
   const mainRef = useRef<HTMLDivElement>(null)
   const baseFilter: FinanceFilter = { month: filter.month, period: filter.period, account: filter.account }
   const title = navigation.find(item => item.id === view)!.title
   useEffect(() => { if (!finance.notice) return; const timer = window.setTimeout(finance.dismissNotice, 7000); return () => window.clearTimeout(timer) }, [finance.notice])
   useEffect(() => { document.title = `AdamLife — ${title}` }, [title])
-  function navigate(next: View) { setView(next); window.scrollTo({ top: 0, behavior: 'instant' }); document.querySelector('main')?.scrollTo({ top: 0, behavior: 'instant' }); mainRef.current?.focus({ preventScroll: true }) }
+  function navigate(next: View) { appNavigation.go({ view: next, manage: null }); window.scrollTo({ top: 0, behavior: 'instant' }); document.querySelector('main')?.scrollTo({ top: 0, behavior: 'instant' }); mainRef.current?.focus({ preventScroll: true }) }
   function openCategory(category: string) { setFilter({ ...filter, query: '', category, kind: 'expense', sort: 'date-desc' }); navigate('transactions') }
   const close = () => setDialog(null), add = () => setDialog({ kind: 'new', type: 'expense' })
   const onOpen = (item: Transaction) => setDialog({ kind: 'detail', item })
   const onImport = () => setDialog({ kind: 'import' })
-  return <Layout view={view} onNavigate={navigate} onAdd={add} onInfo={() => setDialog({ kind: 'info' })}>
+  return <Layout historyNavigation={appNavigation} view={view} onNavigate={navigate} onAdd={add} onInfo={() => setDialog({ kind: 'info' })}>
     <div ref={mainRef} tabIndex={-1} className="page-content"><header className="page-header"><div><h1>{title}</h1>{view === 'overview' && <p>{monthLabel(new Date())}</p>}</div><div className="page-actions">{view === 'transactions' && <button className="button secondary" onClick={onImport}><FileUp size={16} />Импорт PDF</button>}<button className="button primary desktop-add" onClick={add}><Plus size={17} />Добавить операцию</button></div></header>
       {view === 'overview' && <Home data={finance.data} onAdd={add} onImport={onImport} onOpen={onOpen} onOperations={() => { setFilter({ ...filter, kind: 'all', query: '', category: '', period: 'all', account: 'all' }); navigate('transactions') }} onPayments={() => navigate('payments')} onPayment={row => setDialog({ kind: 'payment-detail', row })} />}
       {view === 'transactions' && <Operations items={finance.data.transactions} filter={filter} onFilter={setFilter} onAdd={add} onImport={onImport} onOpen={onOpen} />}

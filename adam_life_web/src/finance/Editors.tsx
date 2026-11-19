@@ -6,10 +6,10 @@ import { formatMoney, amountText, parseMinor, depositEditorValues, type DepositT
 import type { TransferPreset } from './DepositDetails'
 
 type Save = (path: string, method: string, body: unknown) => Promise<void>
-export function Editor({ title, children, onClose, submit }: { title: string; children: ReactNode; onClose: () => void; submit: () => Promise<void> }) {
+export function Editor({ title, children, onClose, submit, submitLabel = 'Сохранить' }: { submitLabel?: string; title: string; children: ReactNode; onClose: () => void; submit: () => Promise<void> }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   async function save(event: FormEvent) { event.preventDefault(); if (busy) return; setBusy(true); setError(''); try { await submit(); onClose() } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось сохранить'); setBusy(false) } }
-  return <Modal title={title} onClose={() => { if (!busy) onClose() }}><form className="transaction-form" onSubmit={save}><fieldset disabled={busy} className="ledger-fields">{children}</fieldset>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" disabled={busy} className="button secondary" onClick={onClose}>Отмена</button><button className="button primary" disabled={busy}>{busy ? 'Сохранение…' : 'Сохранить'}</button></div></form></Modal>
+  return <Modal title={title} onClose={() => { if (!busy) onClose() }}><form className="transaction-form" onSubmit={save}><fieldset disabled={busy} className="ledger-fields">{children}</fieldset>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" disabled={busy} className="button secondary" onClick={onClose}>Отмена</button><button className="button primary" disabled={busy}>{busy ? 'Выполняется…' : submitLabel}</button></div></form></Modal>
 }
 export function AccountEditor({ item, initialKind = 'bank', onSave, onClose }: { item?: Account; initialKind?: Account['kind']; onSave: Save; onClose: () => void }) {
   const [name, setName] = useState(item?.name ?? ''), [kind, setKind] = useState(item?.kind ?? initialKind), [bank, setBank] = useState(item?.bank_code ?? '')
@@ -79,6 +79,6 @@ export function OperationEditor({ item, preset, data, onSave, onClose }: { item?
     <label className="field"><span>Комментарий · необязательно</span><textarea maxLength={1000} rows={2} value={comment} onChange={e => setComment(e.target.value)} /></label>
   </Editor>
 }
-export function Confirm({ title, description, action, onClose }: { title: string; description: string; action: () => Promise<void>; onClose: () => void }) {
-  return <Editor title={title} onClose={onClose} submit={action}><p>{description}</p></Editor>
+export function Confirm({ title, description, action, onClose, actionLabel }: { actionLabel: string; title: string; description: string; action: () => Promise<void>; onClose: () => void }) {
+  return <Editor title={title} onClose={onClose} submit={action} submitLabel={actionLabel}><p>{description}</p></Editor>
 }

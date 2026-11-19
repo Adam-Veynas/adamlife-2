@@ -6,3 +6,11 @@
 .import-review-controls{border:0;padding:0;margin:0;min-width:0;display:grid;gap:12px}
 
 .import-category-row{display:grid;gap:8px;min-width:0;font-size:13px}.import-category-row>strong{overflow-wrap:anywhere}.import-category-actions{display:flex;gap:8px;min-width:0;align-items:center}.import-category-actions>select{flex:1;width:0}.import-category-actions>button{flex-shrink:0;padding-inline:10px;min-height:44px}.import-category-row>small{font-size:11px;line-height:1.5}
+
+/* Text fields must not inherit legacy .import-rows checkbox dimensions. */
+.kaspi-import .import-category-row{width:100%;min-width:0;grid-template-columns:minmax(0,1fr)}
+.kaspi-import .import-category-row>input{display:block;width:100%;min-width:0;max-width:100%;height:auto;min-height:44px;flex-shrink:0;box-sizing:border-box;padding:11px 12px;background:var(--surface-input);color:var(--text);border:1px solid var(--line);border-radius:7px;font-size:16px}
+.kaspi-import .import-category-actions{display:flex;flex-wrap:wrap;width:100%;min-width:0}
+.kaspi-import .import-category-actions>select{flex:1 1 180px;width:100%;min-width:0}
+.kaspi-import .import-category-actions>button{flex:0 0 auto;max-width:100%}
+@media(max-width:430px){.kaspi-import .import-category-actions{flex-direction:column;align-items:stretch}.kaspi-import .import-category-actions>select{flex:none}.kaspi-import .import-category-actions>button{width:100%}}
