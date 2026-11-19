@@ -41,6 +41,13 @@ class ReviewInput(Input):
     use_statement_opening: bool = False
     revision: str | None = None
     acknowledge_difference: bool = False
+    ready_only: bool = False
+
+
+class CategoryAssignment(ReviewInput):
+    index: int = Field(ge=0, le=5000)
+    category_id: UUID
+    remember: bool = True
 
 
 class RuleInput(Input):
@@ -139,7 +146,7 @@ def suggest(row, rules, categories):
     own_hint = 'свой' in normalize(row['bank_type']) or 'своих' in full or 'своего' in full or ('*' in full and ('bank' in full or 'банк' in full))
     return dict(kind='transfer' if own else 'adjustment' if adjustment else kind, category_id=str(category.id) if category else None,
                 category_name=category_name, other_account_id=str(own.account_id) if own else None,
-                adjustment_type=adjustment, requires_review=bool(adjustment or (not own and (review or own_hint))), own_hint=bool(own or own_hint))
+                adjustment_type=adjustment, needs_category=bool(review and not own and not adjustment), requires_review=bool(adjustment or (not own and (review or own_hint))), own_hint=bool(own or own_hint))
 
 
 def ledger_revision(accounts, operations, rules, evidence):
@@ -183,9 +190,33 @@ def prepare(session, batch, body):
         if choice.kind: item['kind'] = choice.kind
         if choice.category_id: item['category_id'] = str(choice.category_id)
         if choice.other_account_id: item['other_account_id'] = str(choice.other_account_id)
-        item['requires_review'] = bool(item['requires_review'] or (same and not previous) or ((counts[raw['fingerprint']] or incoming_counts[raw['fingerprint']] > 1) and not previous))
-        item['status'] = 'duplicate' if previous else 'skip' if choice.action == 'skip' else 'review' if item['requires_review'] and not choice.reviewed else 'new'
+        if choice.category_id:
+            category = owned(session, Category, choice.category_id)
+            if category.archived_at or category.kind != ('income' if int(raw['signed_minor']) > 0 else 'expense'):
+                fail('IMPORT_CATEGORY', 'Выберите активную категорию нужного типа.', 422)
+            item['category_name'] = category.name
+            item['needs_category'] = False
+        reasons = []
+        if body.ready_only and not item['category_id'] and item['kind'] in ('income', 'expense') and any(c.kind == item['kind'] and normalize(c.name) == normalize(item['category_name']) and c.archived_at for c in categories):
+            item['needs_category'] = True
+        if item['needs_category'] and item['kind'] in ('income', 'expense'): reasons.append('category')
+        if suggestion['own_hint'] and not suggestion['other_account_id']: reasons.append('ownership')
+        if suggestion['adjustment_type']: reasons.append('adjustment')
+        if same and not previous: reasons.append('match')
+        # Two equal rows in one bank statement are two movements. Only overlap with
+        # earlier evidence is ambiguous; ordinal remains part of the identity.
+        # Preserve the legacy all-or-nothing endpoint's explicit confirmation.
+        # The ready-only workflow retains both equal bank rows by their ordinals.
+        if (counts[raw['fingerprint']] or (not body.ready_only and incoming_counts[raw['fingerprint']] > 1)) and not previous: reasons.append('overlap')
+        item['review_reasons'] = [] if choice.reviewed else reasons
+        item['requires_review'] = bool(item['review_reasons'])
+        item['status'] = 'duplicate' if previous else 'skip' if choice.action == 'skip' else 'review' if item['requires_review'] else 'new'
         if choice.action == 'match' and not previous:
+            if body.ready_only and not choice.match_id:
+                item['status'] = 'review'
+                item['review_reasons'].append('match')
+                selected.append(item)
+                continue
             if not choice.match_id or str(choice.match_id) in used_matches or not any(o.id == choice.match_id for o in same):
                 fail('IMPORT_MATCH', 'Совпадение должно иметь ту же дату, сумму и счёт и использоваться только один раз.', 422)
             # Do not merge extra identical bank rows into an already evidenced movement on this bank account.
@@ -205,6 +236,12 @@ def prepare(session, batch, body):
             if not choice.reviewed and choice.action != 'skip': item['status'] = 'review'
         if item['kind'] == 'transfer' and not item['other_account_id'] and not previous and choice.action == 'add':
             item['status'] = 'review'
+            item['review_reasons'].append('transfer_account')
+        if body.ready_only and item['kind'] == 'transfer' and item['other_account_id'] and item['status'] == 'new':
+            other = next((a for a in accounts if str(a.id) == item['other_account_id']), None)
+            if not other or other.id == account.id or other.archived_at or other.currency != account.currency or date.fromisoformat(item['date']) < other.opening_date:
+                item['status'] = 'review'
+                item['review_reasons'].append('transfer_account')
         selected.append(item)
     # Rebase is explicit and transactional. Existing opening balances are never overwritten implicitly.
     start, end = date.fromisoformat(batch.payload['start']), date.fromisoformat(batch.payload['end'])
@@ -215,13 +252,17 @@ def prepare(session, batch, body):
     for item in selected:
         if item['status'] not in ('skip', 'duplicate') and date.fromisoformat(item['date']) < boundary:
             item['status'] = 'before_opening'
+            item['review_reasons'].append('before_opening')
     before = balances(accounts, operations, end)[0][account.id]
     projected = before
     if body.use_statement_opening:
         projected += int(batch.payload['opening_minor']) - (account.opening_balance_minor if account.opening_date <= end else 0)
-    projected += sum(int(item['signed_minor']) for item in selected if item['status'] not in ('skip', 'duplicate', 'before_opening') and item['action'] == 'add')
+    projected += sum(int(item['signed_minor']) for item in selected if (item['status'] == 'new' if body.ready_only else item['status'] not in ('skip', 'duplicate', 'before_opening')) and item['action'] == 'add')
     return dict(rows=selected, revision=ledger_revision(accounts, operations, rules, evidence), before_minor=str(before), projected_minor=str(projected),
                 difference_minor=str(projected - int(batch.payload['closing_minor'])), opening_date=str(account.opening_date), opening_minor=str(account.opening_balance_minor),
+                needs_category=sum(i['status'] == 'review' and i['review_reasons'] == ['category'] for i in selected),
+                financial_review=sum(i['status'] in ('review', 'before_opening') and i['review_reasons'] != ['category'] for i in selected),
+                preliminary=any(i['status'] in ('review', 'before_opening', 'skip') for i in selected) or projected != int(batch.payload['closing_minor']),
                 before_opening=sum(i['status'] == 'before_opening' for i in selected),
                 found=len(selected), duplicates=sum(i['status'] == 'duplicate' for i in selected),
                 review=sum(i['status'] in ('review', 'before_opening') for i in selected),
@@ -264,19 +305,58 @@ def remember(session, uid, item, category, other):
         session.flush(); audit(session, uid, rule, 'rule_saved', {'type': rule_type})
 
 
+@router.post('/{identifier}/category')
+def assign_category(identifier: UUID, body: CategoryAssignment, auth=Depends(finance_session)):
+    session, uid = auth
+    batch = draft(session, identifier)
+    preview, _ = prepare(session, batch, body)
+    if body.index >= len(preview['rows']): fail('IMPORT_CHOICES', 'Строка не найдена.', 422)
+    selected = preview['rows'][body.index]
+    if selected['kind'] not in ('income', 'expense') or selected['status'] in ('duplicate', 'skip'):
+        fail('IMPORT_CATEGORY', 'Для перевода или возврата сначала уточните финансовый смысл.', 422)
+    category = owned(session, Category, body.category_id)
+    kind = 'income' if int(selected['signed_minor']) > 0 else 'expense'
+    if category.kind != kind or category.archived_at: fail('IMPORT_CATEGORY', 'Выберите активную категорию нужного типа.', 422)
+    choices = {c.index: c for c in body.choices}
+    for row in preview['rows']:
+        existing = choices.get(row['index'], Choice(index=row['index']))
+        if row['status'] in ('duplicate', 'skip') or row['kind'] not in ('income', 'expense'): continue
+        if normalize(row['description']) != normalize(selected['description']) or (int(row['signed_minor']) > 0) != (kind == 'income'): continue
+        if row['index'] != body.index and existing.category_id: continue
+        choices[row['index']] = existing.model_copy(update={'category_id': category.id, 'remember_category': False})
+    if body.remember:
+        remember(session, uid, {**selected, 'remember_category': True, 'remember_account': False}, category, None)
+    updated = body.model_copy(update={'choices': list(choices.values())})
+    result, _ = prepare(session, batch, updated)
+    return {'review': result, 'choices': [c.model_dump(mode='json') for c in choices.values()]}
+
+
 @router.post('/{identifier}/commit')
 def commit(identifier: UUID, body: ReviewInput, auth=Depends(finance_session)):
     session, uid = auth
     batch = owned(session, ImportBatch, identifier)
+    request_key = sha256(body.model_dump_json().encode()).hexdigest()
+    if body.ready_only and batch.result.get('request_key') == request_key: return batch.result['response']
     if batch.status == 'committed': return batch.result
     batch = draft(session, identifier)
     preview, account = prepare(session, batch, body)
     if not body.revision or body.revision != preview['revision']:
         fail('IMPORT_CHANGED', 'Данные изменились. Обновите предпросмотр перед сохранением.')
-    if preview['review']:
+    if body.ready_only and body.use_statement_opening:
+        fail('IMPORT_OPENING', 'Частичный импорт не меняет начальный остаток и дату учёта.', 422)
+    if preview['review'] and not body.ready_only:
         fail('IMPORT_REVIEW', 'Проверьте неоднозначные строки или исключите их. Для старой истории согласуйте дату начала учёта.', 422)
-    if preview['difference_minor'] != '0' and not body.acknowledge_difference:
+    if preview['difference_minor'] != '0' and not body.acknowledge_difference and not body.ready_only:
         fail('IMPORT_RECONCILE', 'Расчётный остаток отличается от выписки. Подтвердите расхождение; баланс автоматически не исправляется.', 422)
+    source_batch = batch
+    if body.ready_only:
+        if not preview['new']: fail('IMPORT_NOT_READY', 'Пока нет новых готовых операций.', 422)
+        # Each saved portion is a normal committed import (including existing undo).
+        # Keep the original draft intact so unresolved rows can be reviewed later.
+        batch = ImportBatch(user_id=uid, file_hash=batch.file_hash, bank_digest=batch.bank_digest,
+                            account_id=account.id, payload={k: v for k, v in batch.payload.items() if k != 'rows'},
+                            result={}, expires_at=batch.expires_at)
+        session.add(batch); session.flush()
     baseline = None
     if body.use_statement_opening:
         baseline = dict(date=str(account.opening_date), amount=str(account.opening_balance_minor), version=account.version)
@@ -288,6 +368,7 @@ def commit(identifier: UUID, body: ReviewInput, auth=Depends(finance_session)):
         if item['status'] == 'duplicate':
             references.append(item['duplicate_id']); continue
         if item['action'] == 'skip': skipped += 1; continue
+        if body.ready_only and item['status'] != 'new': continue
         if item['action'] == 'match':
             transaction = owned(session, Transaction, UUID(item['match_id']))
             category = owned(session, Category, UUID(item['category_id'])) if item['remember_category'] and item['category_id'] else session.get(Category, transaction.category_id) if transaction.category_id else None
@@ -356,6 +437,13 @@ def commit(identifier: UUID, body: ReviewInput, auth=Depends(finance_session)):
                         baseline=baseline, account_version=account.version, difference_minor=preview['difference_minor'])
     batch.payload = {key: value for key, value in batch.payload.items() if key != 'rows'}
     session.flush(); audit(session, uid, batch, 'committed', {'added': len(created), 'skipped': skipped})
+    if body.ready_only:
+        response = {**batch.result, 'batch_id': str(batch.id), 'remaining': preview['review'],
+                    'complete': preview['review'] == 0, 'preliminary': preview['preliminary']}
+        source_batch.account_id = account.id
+        source_batch.result = {'request_key': request_key, 'response': response}
+        session.flush()
+        return response
     return batch.result
 
 

@@ -46,3 +46,15 @@ export async function uploadPDF<T>(file: Blob, csrf: string): Promise<T> {
   if (!payload || typeof payload.id !== 'string') throw new Error('Получен неполный ответ сервера. Повторите загрузку.')
   return payload as T
 }
+
+
+// Refresh the server decision immediately before saving; pending rows and balance
+// reconciliation never turn into an implicit approval of those rows.
+export async function commitReadyPortion<Review extends { new: number; revision: string }, Result>(
+  request: <T>(path: string, method?: string, body?: unknown) => Promise<T>, id: string, body: Record<string, unknown>,
+): Promise<Result> {
+  const payload = { ...body, ready_only: true, use_statement_opening: false }
+  const latest = await request<Review>(`/${id}/review`, 'POST', payload)
+  if (!latest.new) throw new Error('Пока нет новых готовых операций. Уточните категории или финансовые вопросы.')
+  return request<Result>(`/${id}/commit`, 'POST', { ...payload, revision: latest.revision })
+}
